@@ -345,7 +345,79 @@ AgentDetailPage
 - `GET /api/agents/:agentId/markdown-files/content?path=<encodedPath>`
 - `PUT /api/agents/:agentId/markdown-files/content`
 
-### 12.2 保存失败的最小错误码
+### 12.2 建议响应示例
+
+Agent 详情响应示例：
+
+```json
+{
+  "agentId": "tangyuan",
+  "agentName": "汤圆",
+  "role": "前端与文档",
+  "title": "交付与说明完善者",
+  "status": "running",
+  "lastActiveAt": "2026-03-08T17:45:00Z",
+  "currentTaskSummary": "实现 Agent 详情页与 Markdown 浏览/编辑界面",
+  "score": 16,
+  "workspacePath": "/workspace/agents/tangyuan"
+}
+```
+
+文件列表响应示例：
+
+```json
+[
+  {
+    "path": "TASK.md",
+    "name": "TASK.md",
+    "category": "task",
+    "editable": true,
+    "exists": true,
+    "lastModifiedAt": "2026-03-08T17:20:00Z",
+    "size": 2184
+  },
+  {
+    "path": "AGENTS.md",
+    "name": "AGENTS.md",
+    "category": "identity",
+    "editable": false,
+    "exists": true
+  },
+  {
+    "path": "README.md",
+    "name": "README.md",
+    "category": "other",
+    "editable": false,
+    "exists": false
+  }
+]
+```
+
+文件内容响应示例：
+
+```json
+{
+  "path": "TASK.md",
+  "name": "TASK.md",
+  "content": "# TASK\n\n- [ ] example",
+  "editable": true,
+  "version": "etag-1709880000",
+  "lastModifiedAt": "2026-03-08T17:20:00Z"
+}
+```
+
+保存成功响应示例：
+
+```json
+{
+  "ok": true,
+  "path": "TASK.md",
+  "version": "etag-1709880300",
+  "lastModifiedAt": "2026-03-08T17:25:00Z"
+}
+```
+
+### 12.3 保存失败的最小错误码
 
 ```ts
 type UpdateMarkdownFileErrorCode =
