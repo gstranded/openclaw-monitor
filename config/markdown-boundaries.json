@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "mode": "read-only-by-default",
+  "approvedMarkdownRoots": [
+    "docs/**",
+    "content/**",
+    "fixtures/markdown/**"
+  ],
+  "deniedPathPrefixes": [
+    ".git/",
+    ".github/",
+    ".ssh/",
+    "state/",
+    "secrets/",
+    "tmp/"
+  ],
+  "deniedPathFragments": [
+    "../",
+    "..\\",
+    "/.git/",
+    "/.ssh/"
+  ],
+  "deniedExactNames": [
+    ".env",
+    "id_rsa",
+    "known_hosts",
+    "github_token"
+  ],
+  "allowedExtensions": [
+    ".md",
+    ".markdown"
+  ],
+  "maxFileSizeBytes": 262144,
+  "requireBackupBeforeWrite": true,
+  "backupDir": ".rollback/markdown-edits",
+  "requireAuditLog": true,
+  "auditLogPath": ".audit/markdown-edits.jsonl"
+}
