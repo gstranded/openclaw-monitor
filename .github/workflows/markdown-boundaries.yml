@@ -16,4 +16,4 @@ jobs:
         with:
           python-version: '3.11'
       - name: Validate markdown boundary policy
-        run: python3 scripts/check_markdown_boundaries.py
+        run: python3 scripts/check_markdown_boundaries.py --verify-artifact-layout

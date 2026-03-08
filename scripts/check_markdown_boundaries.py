@@ -3,8 +3,10 @@ import argparse
 import fnmatch
 import json
 import posixpath
+import shutil
 import sys
-from pathlib import PurePosixPath
+import tempfile
+from pathlib import Path, PurePosixPath
 
 ROOT = PurePosixPath('.')
 
@@ -129,10 +131,61 @@ def run_fixture_checks(policy: dict) -> list[str]:
     return errors
 
 
+def assert_repo_relative_artifact_path(path_value: str, label: str) -> str | None:
+    normalized = normalize(path_value)
+    if not normalized:
+        return f'{label} must not be empty'
+    if normalized.startswith('/'):
+        return f'{label} must be repo-relative: {path_value}'
+    if normalized.startswith('../') or normalized == '..':
+        return f'{label} must not escape repo root: {path_value}'
+    return None
+
+
+def verify_artifact_layout(policy: dict) -> list[str]:
+    errors = []
+
+    backup_dir = normalize(policy.get('backupDir', ''))
+    audit_path = normalize(policy.get('auditLogPath', ''))
+
+    for label, value in (('backupDir', backup_dir), ('auditLogPath', audit_path)):
+        maybe_error = assert_repo_relative_artifact_path(value, label)
+        if maybe_error:
+            errors.append(maybe_error)
+
+    if errors:
+        return errors
+
+    sandbox = Path(tempfile.mkdtemp(prefix='markdown-boundary-artifacts-'))
+    try:
+        backup_root = sandbox / Path(backup_dir)
+        audit_file = sandbox / Path(audit_path)
+
+        backup_root.mkdir(parents=True, exist_ok=True)
+        audit_file.parent.mkdir(parents=True, exist_ok=True)
+        audit_file.touch(exist_ok=True)
+
+        if not backup_root.is_dir():
+            errors.append(f'backupDir was not materialized as directory: {backup_dir}')
+        if not audit_file.is_file():
+            errors.append(f'auditLogPath was not materialized as file: {audit_path}')
+        if backup_root == audit_file.parent:
+            errors.append('backupDir and auditLogPath parent must stay separate for forensic clarity')
+    finally:
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description='Validate markdown path boundary policy.')
     parser.add_argument('--policy', default='config/markdown-boundaries.json')
     parser.add_argument('--check-path', action='append', default=[])
+    parser.add_argument(
+        '--verify-artifact-layout',
+        action='store_true',
+        help='materialize backup/audit targets in a temporary sandbox to prove rollback/audit paths are creatable',
+    )
     args = parser.parse_args()
 
     with open(args.policy, 'r', encoding='utf-8') as f:
@@ -140,6 +193,8 @@ def main() -> int:
 
     errors = validate_policy(policy)
     errors.extend(run_fixture_checks(policy))
+    if args.verify_artifact_layout:
+        errors.extend(verify_artifact_layout(policy))
 
     for path in args.check_path:
         allowed, reason = is_allowed(path, policy)

@@ -54,7 +54,7 @@ This commit does not implement the write path itself; it hardens the contract th
 Local check:
 
 ```bash
-python3 scripts/check_markdown_boundaries.py
+python3 scripts/check_markdown_boundaries.py --verify-artifact-layout
 ```
 
 Optional targeted path probe:
@@ -62,6 +62,8 @@ Optional targeted path probe:
 ```bash
 python3 scripts/check_markdown_boundaries.py --check-path docs/runbook.md --check-path ../outside.md
 ```
+
+The `--verify-artifact-layout` mode does **not** mutate the repo working tree. It creates the configured rollback/audit targets inside a temporary sandbox, proves they can be materialized as a directory + append target under a repo-relative root, and then removes that sandbox immediately.
 
 CI check:
 
