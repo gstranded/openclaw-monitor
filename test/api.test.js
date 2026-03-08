@@ -43,6 +43,20 @@ test('GET /api/v1/agents rejects invalid limit', async () => {
   });
 });
 
+test('GET /api/v1/leaderboard returns ranked entries with window metadata', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/v1/leaderboard?window=7d&sortBy=stability&limit=1`);
+    assert.equal(response.status, 200);
+
+    const payload = await response.json();
+    assert.equal(payload.data.length, 1);
+    assert.equal(payload.data[0].agentId, 'buding');
+    assert.equal(payload.data[0].rank, 1);
+    assert.equal(payload.meta.window, '7d');
+    assert.equal(payload.meta.sortBy, 'stability');
+  });
+});
+
 test('GET /api/v1/leaderboard rejects unsupported sort field', async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/v1/leaderboard?sortBy=latency`);
@@ -51,6 +65,20 @@ test('GET /api/v1/leaderboard rejects unsupported sort field', async () => {
     const payload = await response.json();
     assert.equal(payload.error.code, 'INVALID_ARGUMENT');
     assert.match(payload.error.message, /sortBy/);
+  });
+});
+
+test('GET /api/v1/agents/:id returns detail payload for known agent', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/v1/agents/buding`);
+    assert.equal(response.status, 200);
+
+    const payload = await response.json();
+    assert.equal(payload.data.agentId, 'buding');
+    assert.equal(payload.data.recentEvents.length, 1);
+    assert.equal(payload.data.sourceStatus.length, 5);
+    assert.equal(payload.meta.partial, true);
+    assert.deepEqual(payload.meta.degradeReasons, ['github_issue_cache_reused']);
   });
 });
 
