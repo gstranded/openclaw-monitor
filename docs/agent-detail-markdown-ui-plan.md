@@ -318,7 +318,89 @@ AgentDetailPage
 
 若先做单页内状态切换，也应保留未来可升级到独立 URL 的能力。
 
-## 11. QA 对齐点
+## 11. 文件暴露与编辑策略建议
+
+为避免前端先做了入口、后端再临时收口，建议先固定一版白名单策略。
+
+| 文件 | 默认展示 | 默认可编辑 | 说明 |
+| --- | --- | --- | --- |
+| `TASK.md` | 是 | 是 | 任务推进主文件，需支持编辑与保存 |
+| `SCORE.md` | 是 | 是 | 积分记录需要直接修订 |
+| `AGENTS.md` | 是 | 否/按策略 | 角色规则文件，建议默认只读 |
+| `SOUL.md` | 是 | 否/按策略 | 角色人格说明，建议默认只读 |
+| `IDENTITY.md` | 是 | 否 | 身份信息通常不应频繁编辑 |
+| `USER.md` | 是 | 否 | 用户偏好类说明，建议默认只读 |
+| 其他 `.md` | 可选 | 按白名单 | 仅当后端明确放行时展示 |
+
+前端不应自行猜测可写权限，应完全以后端返回的 `editable` 为准。
+
+## 12. 接口与错误码建议
+
+除字段结构外，建议后端补齐最小行为约定，方便前端稳定处理状态。
+
+### 12.1 建议接口形态
+
+- `GET /api/agents/:agentId`
+- `GET /api/agents/:agentId/markdown-files`
+- `GET /api/agents/:agentId/markdown-files/content?path=<encodedPath>`
+- `PUT /api/agents/:agentId/markdown-files/content`
+
+### 12.2 保存失败的最小错误码
+
+```ts
+type UpdateMarkdownFileErrorCode =
+  | 'forbidden'
+  | 'not_found'
+  | 'conflict'
+  | 'validation_failed'
+  | 'workspace_readonly'
+  | 'unknown_error'
+```
+
+前端映射建议：
+
+- `forbidden`：你当前没有编辑该文件的权限
+- `not_found`：目标文件不存在或已被移除
+- `conflict`：文件已被外部更新，请刷新后重试
+- `validation_failed`：保存内容未通过校验
+- `workspace_readonly`：当前工作目录处于只读保护状态
+- `unknown_error`：保存失败，请稍后重试
+
+## 13. Mock 数据建议
+
+在真实页面落地前，建议先准备一组覆盖关键状态的 mock，用于前端布局与 QA 走查。
+
+```ts
+const mockAgentDetail: AgentDetail = {
+  agentId: 'tangyuan',
+  agentName: '汤圆',
+  role: '前端与文档',
+  title: '交付与说明完善者',
+  status: 'running',
+  lastActiveAt: '2026-03-08T17:45:00Z',
+  currentTaskSummary: '实现 Agent 详情页与 Markdown 浏览/编辑界面',
+  score: 16,
+  workspacePath: '/workspace/agents/tangyuan'
+}
+
+const mockFiles: AgentMarkdownFileItem[] = [
+  { path: 'TASK.md', name: 'TASK.md', category: 'task', editable: true, exists: true },
+  { path: 'SCORE.md', name: 'SCORE.md', category: 'score', editable: true, exists: true },
+  { path: 'AGENTS.md', name: 'AGENTS.md', category: 'identity', editable: false, exists: true },
+  { path: 'SOUL.md', name: 'SOUL.md', category: 'identity', editable: false, exists: true },
+  { path: 'README.md', name: 'README.md', category: 'other', editable: false, exists: false }
+]
+```
+
+建议至少覆盖以下演示场景：
+
+- `TASK.md` 可编辑并可成功保存
+- `AGENTS.md` 只读
+- 文件不存在但保留列表位
+- 保存冲突
+- 文件内容为空
+
+## 14. QA 对齐点
 
 QA 后续可重点验证：
 
@@ -329,8 +411,21 @@ QA 后续可重点验证：
 - 加载态 / 空态 / 错误态是否区分清楚
 - 长 Markdown 文件滚动与显示是否稳定
 - 冲突提示是否可理解
+- 不存在文件是否以“缺失”展示，而不是直接从列表消失
+- 权限变化后编辑按钮是否与返回字段一致
 
-## 12. 当前阻塞与下一步
+## 15. 最小验收清单（实现前对齐版）
+
+- [ ] Agent 详情页具备概览区 + Markdown 文件区双层结构
+- [ ] 左栏可以稳定展示固定 markdown 文件列表
+- [ ] 右栏支持浏览态与编辑态切换
+- [ ] 至少 1 个可编辑文件支持保存链路演示
+- [ ] 只读文件有明确原因提示
+- [ ] 未保存变更切换文件时会触发确认
+- [ ] 文件读取失败、保存失败、冲突三类状态可区分
+- [ ] mock 数据能覆盖 running / readonly / missing / conflict 四类核心场景
+
+## 16. 当前阻塞与下一步
 
 ### 当前阻塞
 
