@@ -1,0 +1,448 @@
+openapi: 3.1.0
+info:
+  title: OpenClaw Monitor Aggregation API
+  version: 0.1.0
+  summary: Minimal backend aggregation contract for Dashboard and Agent detail pages
+  description: |
+    对应任务：Issue #23
+
+    这一版只交付前端可接入的最小真实接口契约，覆盖：
+    - Dashboard Agent 列表
+    - Agent 详情面板
+    - 排行榜
+
+    统一原则：
+    - 只读聚合
+    - 所有响应带 meta
+    - 上游不可用时返回 partial/degraded，而不是伪造完整数据
+servers:
+  - url: /api/v1
+    description: Relative API base path
+paths:
+  /agents:
+    get:
+      operationId: listAgents
+      summary: List dashboard agent cards
+      parameters:
+        - in: query
+          name: status
+          required: false
+          schema:
+            $ref: '#/components/schemas/AgentStatus'
+        - in: query
+          name: role
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: Agent dashboard cards
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentListResponse'
+              examples:
+                default:
+                  value:
+                    data:
+                      - agentId: buding
+                        displayName: 布丁
+                        emoji: "🍮"
+                        role: 后端开发
+                        title: 接口与服务实现者
+                        status: active
+                        healthScore: 92
+                        currentModel: openai/gpt-5.4
+                        currentBranch: claw/buding/实现-dashboard-与-agent-详情页的后端聚合接口
+                        activeTask:
+                          title: 实现 Dashboard 与 Agent 详情页的后端聚合接口
+                          issueNumber: 23
+                          issueUrl: https://github.com/gstranded/openclaw-monitor/issues/23
+                          priority: high
+                          state: in_progress
+                        lastActivityAt: '2026-03-08T17:37:00Z'
+                        throughput24h: 1
+                        stabilityScore: 95
+                        degraded: false
+                        degradeReasons: []
+                        collectedAt: '2026-03-08T17:37:05Z'
+                        sourceLagMs: 2100
+                    meta:
+                      partial: false
+                      collectedAt: '2026-03-08T17:37:05Z'
+                      sourceLagMs: 2100
+                      degradeReasons: []
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /agents/{agentId}:
+    get:
+      operationId: getAgentDetail
+      summary: Get agent detail panel data
+      parameters:
+        - in: path
+          name: agentId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent detail payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentDetailResponse'
+        '404':
+          description: Agent not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+  /leaderboard:
+    get:
+      operationId: getLeaderboard
+      summary: Get dashboard leaderboard
+      parameters:
+        - in: query
+          name: window
+          required: false
+          schema:
+            type: string
+            enum: [24h, 7d]
+            default: 24h
+        - in: query
+          name: sortBy
+          required: false
+          schema:
+            type: string
+            enum: [score, throughput, stability]
+            default: score
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Leaderboard snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaderboardResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+components:
+  responses:
+    ErrorResponse:
+      description: Standard error envelope
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+  schemas:
+    AgentStatus:
+      type: string
+      enum: [active, idle, blocked, offline, unknown]
+    Meta:
+      type: object
+      additionalProperties: false
+      required: [partial, collectedAt]
+      properties:
+        partial:
+          type: boolean
+        collectedAt:
+          type: string
+          format: date-time
+        sourceLagMs:
+          type: integer
+          minimum: 0
+        degradeReasons:
+          type: array
+          items:
+            type: string
+    ErrorDetail:
+      type: object
+      additionalProperties: true
+    ErrorObject:
+      type: object
+      additionalProperties: false
+      required: [code, message, retryable]
+      properties:
+        code:
+          type: string
+          enum:
+            - INVALID_ARGUMENT
+            - NOT_FOUND
+            - UPSTREAM_UNAVAILABLE
+            - RATE_LIMITED
+            - INTERNAL_ERROR
+        message:
+          type: string
+        retryable:
+          type: boolean
+        details:
+          $ref: '#/components/schemas/ErrorDetail'
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error, meta]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorObject'
+        meta:
+          $ref: '#/components/schemas/Meta'
+    ActiveTask:
+      type: object
+      additionalProperties: false
+      required: [title, issueNumber, issueUrl, priority, state]
+      properties:
+        title:
+          type: string
+        issueNumber:
+          type: integer
+        issueUrl:
+          type: string
+          format: uri
+        priority:
+          type: string
+          enum: [low, medium, high, urgent]
+        state:
+          type: string
+          enum: [todo, in_progress, blocked, done]
+        notes:
+          type: string
+    AgentSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - agentId
+        - displayName
+        - emoji
+        - role
+        - title
+        - status
+        - healthScore
+        - degraded
+        - degradeReasons
+        - collectedAt
+      properties:
+        agentId:
+          type: string
+        displayName:
+          type: string
+        emoji:
+          type: string
+        role:
+          type: string
+        title:
+          type: string
+        status:
+          $ref: '#/components/schemas/AgentStatus'
+        healthScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+        currentModel:
+          type: string
+        currentBranch:
+          type: string
+        activeTask:
+          $ref: '#/components/schemas/ActiveTask'
+        lastActivityAt:
+          type: string
+          format: date-time
+        throughput24h:
+          type: integer
+          minimum: 0
+        stabilityScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+        degraded:
+          type: boolean
+        degradeReasons:
+          type: array
+          items:
+            type: string
+        collectedAt:
+          type: string
+          format: date-time
+        sourceLagMs:
+          type: integer
+          minimum: 0
+    SourceState:
+      type: object
+      additionalProperties: false
+      required: [name, status]
+      properties:
+        name:
+          type: string
+          enum: [session, workspace, github, git, events]
+        status:
+          type: string
+          enum: [ok, degraded, unavailable]
+        message:
+          type: string
+        collectedAt:
+          type: string
+          format: date-time
+    Link:
+      type: object
+      additionalProperties: false
+      required: [label, url]
+      properties:
+        label:
+          type: string
+        url:
+          type: string
+          format: uri
+    TimelineEvent:
+      type: object
+      additionalProperties: false
+      required: [eventId, timestamp, kind, title, summary, severity, source, degraded]
+      properties:
+        eventId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        agentId:
+          type: string
+        kind:
+          type: string
+        title:
+          type: string
+        summary:
+          type: string
+        severity:
+          type: string
+          enum: [info, warning, error]
+        source:
+          type: string
+          enum: [session, workspace, github, git, system]
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/Link'
+        metadata:
+          type: object
+          additionalProperties: true
+        degraded:
+          type: boolean
+    AgentDetail:
+      allOf:
+        - $ref: '#/components/schemas/AgentSummary'
+        - type: object
+          additionalProperties: false
+          required: [recentEvents, sourceStatus]
+          properties:
+            recentEvents:
+              type: array
+              maxItems: 20
+              items:
+                $ref: '#/components/schemas/TimelineEvent'
+            sourceStatus:
+              type: array
+              items:
+                $ref: '#/components/schemas/SourceState'
+    LeaderboardEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - agentId
+        - displayName
+        - role
+        - rank
+        - leaderboardScore
+        - completedCount7d
+        - throughput24h
+        - stabilityScore
+        - healthScore
+        - degraded
+      properties:
+        agentId:
+          type: string
+        displayName:
+          type: string
+        role:
+          type: string
+        rank:
+          type: integer
+          minimum: 1
+        leaderboardScore:
+          type: number
+        completedCount7d:
+          type: integer
+          minimum: 0
+        throughput24h:
+          type: integer
+          minimum: 0
+        stabilityScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+        healthScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+        lastActivityAt:
+          type: string
+          format: date-time
+        trend:
+          type: string
+          enum: [up, flat, down]
+        degraded:
+          type: boolean
+    AgentListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentSummary'
+        meta:
+          $ref: '#/components/schemas/Meta'
+    AgentDetailResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/AgentDetail'
+        meta:
+          $ref: '#/components/schemas/Meta'
+    LeaderboardResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/LeaderboardEntry'
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/Meta'
+            - type: object
+              additionalProperties: false
+              properties:
+                window:
+                  type: string
+                  enum: [24h, 7d]
+                sortBy:
+                  type: string
+                  enum: [score, throughput, stability]
