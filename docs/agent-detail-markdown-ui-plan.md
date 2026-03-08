@@ -498,17 +498,150 @@ QA 后续可重点验证：
 - 冲突重试路径清楚
 - QA 可稳定复现四类关键状态
 
-## 17. 当前阻塞与下一步
+## 17. 建议前端文件落位（实现接手版）
+
+如果后续仓库补齐前端工程，建议先按下面的最小文件结构落位，避免页面状态、接口请求与编辑逻辑混在同一个文件里。
+
+```text
+src/
+├── pages/
+│   └── agents/
+│       └── AgentDetailPage.tsx
+├── components/agents/
+│   ├── AgentHeader.tsx
+│   ├── AgentSummaryCard.tsx
+│   ├── MarkdownFileList.tsx
+│   ├── MarkdownToolbar.tsx
+│   ├── MarkdownViewer.tsx
+│   ├── MarkdownEditor.tsx
+│   └── UnsavedChangesDialog.tsx
+├── hooks/
+│   └── useAgentMarkdownFile.ts
+├── services/
+│   └── agentMarkdown.ts
+├── mocks/
+│   └── agentDetail.ts
+└── types/
+    └── agent.ts
+```
+
+落位原则：
+
+- 页面文件只负责组装与状态编排
+- 接口请求集中在 `services/`
+- 数据类型集中在 `types/`
+- mock 数据不要散落到组件内部
+- 文件读写与脏数据判断尽量收敛到 hook
+
+## 18. 页面状态机建议
+
+为了减少后续实现时的状态分叉，建议先统一页面主状态。
+
+```ts
+type FilePaneMode = 'view' | 'edit'
+
+type FilePaneStatus =
+  | 'idle'
+  | 'loading'
+  | 'ready'
+  | 'empty'
+  | 'missing'
+  | 'readonly'
+  | 'saving'
+  | 'save_error'
+  | 'conflict'
+  | 'load_error'
+```
+
+建议约束：
+
+- `mode=view` 时允许 `loading/ready/empty/missing/readonly/load_error`
+- `mode=edit` 时允许 `ready/saving/save_error/conflict/readonly`
+- `saving` 期间禁止再次提交与切换文件
+- `conflict` 与 `save_error` 都必须保留本地编辑内容
+
+## 19. 组件职责切分建议
+
+### 19.1 AgentDetailPage
+
+负责：
+
+- 解析 `agentId`
+- 拉取 agent 详情 / 文件列表
+- 管理当前选中文件
+- 管理未保存切换拦截
+- 组合 header、列表、viewer、editor
+
+不负责：
+
+- 直接写 markdown 渲染细节
+- 直接内嵌所有接口实现
+
+### 19.2 MarkdownFileList
+
+负责：
+
+- 渲染文件列表
+- 展示选中态、只读态、缺失态
+- 抛出切换事件
+
+不负责：
+
+- 保存逻辑
+- 文件内容拉取
+
+### 19.3 MarkdownEditor
+
+负责：
+
+- 文本编辑
+- 脏数据跟踪
+- 保存按钮启停状态
+
+不负责：
+
+- 文件列表切换确认弹窗
+- agent 详情展示
+
+## 20. Mock → 真实接口切换顺序
+
+建议按下面顺序落地，能最大化减少返工：
+
+1. `mocks/agentDetail.ts` 先覆盖 running / readonly / missing / conflict 四类场景
+2. 页面骨架先只消费 mock 数据，走通浏览 / 编辑 / 切换 / 未保存提示
+3. 替换 agent 详情接口与文件列表接口
+4. 再替换文件内容读取接口
+5. 最后接保存接口与冲突处理
+
+原因：
+
+- 页面布局和状态交互先稳定
+- 真接口接入时只替换数据源，不推翻组件职责
+- QA 可以更早介入看交互，而不是等后端齐备后才开始
+
+## 21. 最小 issue / PR 回写摘要模板
+
+后续如果进入实现或提 PR，建议摘要至少包含：
+
+- 本次覆盖的 slice（例如：静态双栏 + mock 浏览编辑）
+- 当前未覆盖的能力（例如：真实保存接口、冲突处理）
+- 已验证内容（例如：默认文件选中、只读提示、未保存切换拦截）
+
+示例：
+
+> 本次先完成 Agent 详情页静态骨架与 markdown 文件双栏浏览/编辑流，使用 mock 数据覆盖 TASK/SCORE/AGENTS 三类文件场景；已验证默认文件选中、只读提示、未保存切换确认，真实文件保存接口与冲突处理留在下一 slice 接入。
+
+## 22. 当前阻塞与下一步
 
 ### 当前阻塞
 
 - 仓库中尚无可承载界面的前端应用骨架
 - 当前无法在现有仓库内直接落真实页面代码、路由和组件
-- 本轮未能直接读取 Issue 原文，需要后续补齐 issue 细节核对
+- 当前环境无法直接拉取 GitHub Issue 原文，需后续补做 issue 细节核对
 
 ### 建议下一步
 
 1. 由负责前端实现的同学补充应用初始化或现有 UI 工程落库
-2. 基于本草案先实现 AgentDetailPage 静态页面与 mock 数据
+2. 按本文件第 16~20 节先完成静态页面与 mock 状态流
 3. 再接入 Markdown 文件列表读取 / 内容读取 / 保存接口
-4. 最后补页面状态、冲突提示与回归验证
+4. 最后补冲突处理、只读原因文案与 QA 回归验证
