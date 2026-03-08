@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/data.js && node --check src/router.js"
+    "check": "node --check src/server.js && node --check src/data.js && node --check src/router.js",
+    "test": "NODE_ENV=test node --test test/*.test.js"
   }
 }
