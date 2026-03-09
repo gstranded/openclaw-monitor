@@ -10,6 +10,8 @@
 
 ## 已确认事实
 
+已阅读 Issue #25，目标是实现 Agent 详情页、Markdown 文件列表/内容浏览与 diff/预览/保存入口，并对只读、可编辑、保存失败状态提供明确反馈。
+
 仓库当前可见文件仅有：
 
 - `docs/agent-detail-markdown-ui-plan.md`
