@@ -13,6 +13,9 @@ export async function fetchJson<T>(
   opts?: {
     timeoutMs?: number
     signal?: AbortSignal
+    method?: string
+    headers?: Record<string, string>
+    body?: BodyInit | null
   }
 ): Promise<T> {
   const timeoutMs = opts?.timeoutMs ?? 10_000
@@ -24,8 +27,9 @@ export async function fetchJson<T>(
 
   try {
     const res = await fetch(url, {
-      method: 'GET',
-      headers: { 'Accept': 'application/json' },
+      method: opts?.method ?? 'GET',
+      headers: { 'Accept': 'application/json', ...(opts?.headers ?? {}) },
+      body: opts?.body,
       signal
     })
 
