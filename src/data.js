@@ -1,134 +1,228 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const collectedAt = '2026-03-08T17:37:05Z';
 const docsDir = path.resolve(process.cwd(), 'docs');
 const markdownAllowlist = new Set([
   'dashboard-agent-aggregation.examples.md',
   'self-monitoring-mvp-backend-contract.md',
 ]);
 
-const baseMeta = {
-  partial: false,
-  collectedAt,
-  sourceLagMs: 2100,
-  degradeReasons: [],
-};
-
-const agents = [
-  {
-    agentId: 'buding',
-    displayName: '布丁',
-    emoji: '🍮',
-    role: '后端开发',
-    title: '接口与服务实现者',
-    status: 'active',
-    healthScore: 92,
-    currentModel: 'openai/gpt-5.4',
-    currentBranch: 'claw/buding/实现-dashboard-与-agent-详情页的后端聚合接口',
-    activeTask: {
-      title: '实现 Dashboard 与 Agent 详情页的后端聚合接口',
-      issueNumber: 23,
-      issueUrl: 'https://github.com/gstranded/openclaw-monitor/issues/23',
-      priority: 'high',
-      state: 'in_progress',
-      notes: '先交前端可接入的最小真实接口',
-    },
-    lastActivityAt: '2026-03-08T17:37:00Z',
-    throughput24h: 1,
-    stabilityScore: 95,
-    degraded: false,
-    degradeReasons: [],
-    collectedAt,
-    sourceLagMs: 2100,
-  },
-];
-
-const sourceStatus = [
-  { name: 'session', status: 'ok', message: 'session snapshot fresh', collectedAt },
-  { name: 'workspace', status: 'ok', message: 'TASK.md parsed', collectedAt },
-  { name: 'github', status: 'degraded', message: 'issue metadata cache reused', collectedAt },
-  { name: 'git', status: 'ok', message: 'branch resolved', collectedAt },
-  { name: 'events', status: 'ok', message: 'recent events available', collectedAt },
-];
-
-const recentEvents = [
-  {
-    eventId: 'evt_task_progress_001',
-    timestamp: '2026-03-08T17:36:12Z',
-    agentId: 'buding',
-    kind: 'task.progressed',
-    title: '更新聚合接口契约',
-    summary: '补充 Dashboard 与 Agent 详情页的 OpenAPI 定义',
-    severity: 'info',
-    source: 'git',
-    links: [{ label: 'Issue #23', url: 'https://github.com/gstranded/openclaw-monitor/issues/23' }],
-    metadata: {
-      branch: 'claw/buding/实现-dashboard-与-agent-详情页的后端聚合接口',
-    },
-    degraded: false,
-  },
-];
-
-const leaderboard = [
-  {
-    agentId: 'buding',
-    displayName: '布丁',
-    role: '后端开发',
-    rank: 1,
-    leaderboardScore: 88.4,
-    completedCount7d: 1,
-    throughput24h: 1,
-    stabilityScore: 95,
-    healthScore: 92,
-    lastActivityAt: '2026-03-08T17:37:00Z',
-    trend: 'up',
-    degraded: false,
-  },
-];
-
-function buildMeta(overrides = {}) {
-  return { ...baseMeta, ...overrides };
+function toDate(value) {
+  if (!value) return undefined;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return parsed;
 }
 
-export function listAgents({ status, role, limit }) {
-  let results = [...agents];
-  if (status) results = results.filter((item) => item.status === status);
-  if (role) results = results.filter((item) => item.role === role);
-  if (typeof limit === 'number') results = results.slice(0, limit);
-  return { data: results, meta: baseMeta };
+async function pathExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-export function getAgentDetail(agentId) {
-  const summary = agents.find((item) => item.agentId === agentId);
-  if (!summary) return null;
+async function resolveRuntimeRoot() {
+  if (process.env.OPENCLAW_RUNTIME_DIR) return path.resolve(process.env.OPENCLAW_RUNTIME_DIR);
+
+  // Heuristic: walk up a few levels looking for tasks.json.
+  let cursor = process.cwd();
+  for (let i = 0; i < 8; i += 1) {
+    const candidate = path.join(cursor, 'tasks.json');
+    if (await pathExists(candidate)) return cursor;
+    const parent = path.dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+
+  // Fallback: prefer empty snapshot with explicit degrade reason.
+  return null;
+}
+
+async function loadJson(runtimeRoot, filename) {
+  if (!runtimeRoot) {
+    return {
+      ok: false,
+      filename,
+      error: { code: 'RUNTIME_ROOT_NOT_FOUND', message: 'Unable to resolve runtime root' },
+    };
+  }
+
+  const absolutePath = path.join(runtimeRoot, filename);
+  try {
+    const [raw, stat] = await Promise.all([
+      fs.readFile(absolutePath, 'utf8'),
+      fs.stat(absolutePath),
+    ]);
+    return {
+      ok: true,
+      filename,
+      absolutePath,
+      data: JSON.parse(raw),
+      mtimeMs: stat.mtimeMs,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      filename,
+      absolutePath,
+      error: { code: error?.code ?? 'READ_FAILED', message: error?.message ?? String(error) },
+    };
+  }
+}
+
+function buildFreshness(collectedAtMs, source) {
+  if (!source?.ok) return { ok: false };
+  const lagMs = Math.max(0, collectedAtMs - source.mtimeMs);
   return {
-    data: {
-      ...summary,
-      recentEvents,
-      sourceStatus,
-    },
-    meta: buildMeta({ partial: true, degradeReasons: ['github_issue_cache_reused'] }),
+    ok: true,
+    updatedAt: new Date(source.mtimeMs).toISOString(),
+    lagMs,
   };
 }
 
-export function getLeaderboard({ limit, sortBy = 'score', window = '24h' }) {
-  let results = [...leaderboard];
-  const sorters = {
-    score: (a, b) => b.leaderboardScore - a.leaderboardScore,
-    throughput: (a, b) => b.throughput24h - a.throughput24h,
-    stability: (a, b) => b.stabilityScore - a.stabilityScore,
-  };
-  results.sort(sorters[sortBy] ?? sorters.score);
-  results = results.map((item, index) => ({ ...item, rank: index + 1 }));
-  if (typeof limit === 'number') results = results.slice(0, limit);
+function buildMeta(collectedAtMs, sources, extra = {}) {
+  const degradeReasons = [];
+  for (const [name, source] of Object.entries(sources)) {
+    if (!source?.ok) degradeReasons.push(`${name}_unavailable`);
+  }
+
+  const freshness = Object.fromEntries(Object.entries(sources).map(([name, source]) => [name, buildFreshness(collectedAtMs, source)]));
+  const lagCandidates = Object.values(freshness)
+    .filter((item) => item?.ok)
+    .map((item) => item.lagMs);
+  const sourceLagMs = lagCandidates.length ? Math.max(...lagCandidates) : undefined;
+
+  const partial = degradeReasons.length > 0;
+
   return {
-    data: results,
-    meta: buildMeta({ window, sortBy }),
+    partial,
+    collectedAt: new Date(collectedAtMs).toISOString(),
+    ...(typeof sourceLagMs === 'number' ? { sourceLagMs } : {}),
+    degradeReasons,
+    freshness,
+    ...extra,
   };
 }
 
-export function createNotFound(agentId) {
+function buildSourceStatus(collectedAtMs, sources) {
+  return Object.entries(sources).map(([name, source]) => {
+    if (source?.ok) {
+      return {
+        name,
+        status: 'ok',
+        message: `${name} loaded`,
+        collectedAt: new Date(collectedAtMs).toISOString(),
+        updatedAt: new Date(source.mtimeMs).toISOString(),
+      };
+    }
+    return {
+      name,
+      status: 'degraded',
+      message: `${name} unavailable: ${source?.error?.code ?? 'UNKNOWN'}`,
+      collectedAt: new Date(collectedAtMs).toISOString(),
+      updatedAt: null,
+    };
+  });
+}
+
+async function loadSnapshot() {
+  const collectedAtMs = Date.now();
+  const runtimeRoot = await resolveRuntimeRoot();
+  const [scores, tasks, events] = await Promise.all([
+    loadJson(runtimeRoot, 'scores.json'),
+    loadJson(runtimeRoot, 'tasks.json'),
+    loadJson(runtimeRoot, 'events.json'),
+  ]);
+
+  const sources = { scores, tasks, events };
+  const meta = buildMeta(collectedAtMs, sources);
+  const sourceStatus = buildSourceStatus(collectedAtMs, sources);
+
+  return {
+    collectedAtMs,
+    runtimeRoot,
+    sources,
+    scores: scores.ok ? scores.data : {},
+    tasks: tasks.ok ? tasks.data : [],
+    events: events.ok ? events.data : [],
+    meta,
+    sourceStatus,
+  };
+}
+
+function computeActiveTask(tasksForAgent) {
+  const sorted = [...tasksForAgent].sort((a, b) => {
+    const aAt = toDate(a.updated_at || a.updated_at || a.created_at)?.getTime() ?? 0;
+    const bAt = toDate(b.updated_at || b.updated_at || b.created_at)?.getTime() ?? 0;
+    return bAt - aAt;
+  });
+
+  const candidate = sorted.find((t) => t.status === 'todo' || t.status === 'blocked') ?? sorted[0];
+  if (!candidate) return null;
+  return {
+    taskId: candidate.id,
+    title: candidate.title,
+    issueUrl: candidate.issue_url,
+    priority: candidate.priority,
+    status: candidate.status,
+    updatedAt: candidate.updated_at ?? null,
+  };
+}
+
+function computeLastActivityAt(eventsForAgent) {
+  const times = eventsForAgent
+    .map((evt) => toDate(evt.at)?.getTime())
+    .filter((value) => typeof value === 'number');
+  if (!times.length) return null;
+  return new Date(Math.max(...times)).toISOString();
+}
+
+function computeAgentStatus(activeTask, lastActivityAtIso) {
+  if (activeTask?.status === 'blocked') return 'blocked';
+  if (activeTask?.status === 'todo') return 'active';
+  const last = toDate(lastActivityAtIso)?.getTime();
+  if (last && Date.now() - last < 30 * 60 * 1000) return 'active';
+  if (last) return 'idle';
+  return 'unknown';
+}
+
+function normalizeAgents(snapshot) {
+  const scoreEntries = snapshot.scores && typeof snapshot.scores === 'object' ? snapshot.scores : {};
+  const agentIds = new Set([
+    ...Object.keys(scoreEntries),
+    ...snapshot.tasks.map((t) => t.agent_id).filter(Boolean),
+    ...snapshot.events.map((e) => e.agent_id).filter(Boolean),
+  ]);
+
+  const agents = Array.from(agentIds).sort().map((agentId) => {
+    const score = scoreEntries[agentId] ?? {};
+    const tasksForAgent = snapshot.tasks.filter((t) => t.agent_id === agentId);
+    const eventsForAgent = snapshot.events.filter((e) => e.agent_id === agentId);
+
+    const activeTask = computeActiveTask(tasksForAgent);
+    const lastActivityAt = computeLastActivityAt(eventsForAgent);
+    const status = computeAgentStatus(activeTask, lastActivityAt);
+
+    return {
+      agentId,
+      displayName: score.name ?? agentId,
+      emoji: score.emoji ?? '',
+      role: score.role ?? 'unknown',
+      score: typeof score.score === 'number' ? score.score : 0,
+      status,
+      activeTask,
+      lastActivityAt,
+      degraded: snapshot.meta.partial,
+      degradeReasons: snapshot.meta.degradeReasons,
+    };
+  });
+
+  return agents;
+}
+
+export function createNotFound(agentId, meta) {
   return {
     error: {
       code: 'NOT_FOUND',
@@ -136,7 +230,99 @@ export function createNotFound(agentId) {
       retryable: false,
       details: { agentId },
     },
-    meta: baseMeta,
+    meta,
+  };
+}
+
+export async function getDashboard() {
+  const snapshot = await loadSnapshot();
+  const agents = normalizeAgents(snapshot);
+  const leaderboard = [...agents]
+    .sort((a, b) => b.score - a.score)
+    .map((entry, index) => ({
+      agentId: entry.agentId,
+      displayName: entry.displayName,
+      role: entry.role,
+      rank: index + 1,
+      score: entry.score,
+      lastActivityAt: entry.lastActivityAt,
+      degraded: entry.degraded,
+    }));
+
+  return {
+    data: {
+      agents,
+      leaderboard,
+      recentEvents: snapshot.events.slice(-50),
+      sourceStatus: snapshot.sourceStatus,
+    },
+    meta: snapshot.meta,
+  };
+}
+
+export async function listAgents({ status, role, limit } = {}) {
+  const snapshot = await loadSnapshot();
+  let results = normalizeAgents(snapshot);
+  if (status) results = results.filter((item) => item.status === status);
+  if (role) results = results.filter((item) => item.role === role);
+  if (typeof limit === 'number') results = results.slice(0, limit);
+  return { data: results, meta: snapshot.meta };
+}
+
+export async function getAgentDetail(agentId) {
+  const snapshot = await loadSnapshot();
+  const agents = normalizeAgents(snapshot);
+  const summary = agents.find((item) => item.agentId === agentId);
+  if (!summary) return null;
+
+  const tasks = snapshot.tasks
+    .filter((t) => t.agent_id === agentId)
+    .sort((a, b) => (toDate(b.updated_at)?.getTime() ?? 0) - (toDate(a.updated_at)?.getTime() ?? 0))
+    .slice(0, 50);
+
+  const recentEvents = snapshot.events
+    .filter((evt) => evt.agent_id === agentId)
+    .sort((a, b) => (toDate(b.at)?.getTime() ?? 0) - (toDate(a.at)?.getTime() ?? 0))
+    .slice(0, 50);
+
+  const markdownFiles = await listMarkdownFiles();
+
+  return {
+    data: {
+      ...summary,
+      tasks,
+      recentEvents,
+      sourceStatus: snapshot.sourceStatus,
+      markdownFiles: markdownFiles.data,
+    },
+    meta: snapshot.meta,
+  };
+}
+
+export async function getLeaderboard({ limit, sortBy = 'score', window = '24h' } = {}) {
+  const snapshot = await loadSnapshot();
+  const agents = normalizeAgents(snapshot);
+  const sorters = {
+    score: (a, b) => b.score - a.score,
+    activity: (a, b) => (toDate(b.lastActivityAt)?.getTime() ?? 0) - (toDate(a.lastActivityAt)?.getTime() ?? 0),
+  };
+
+  let results = [...agents].sort(sorters[sortBy] ?? sorters.score);
+  results = results.map((entry, index) => ({
+    agentId: entry.agentId,
+    displayName: entry.displayName,
+    role: entry.role,
+    rank: index + 1,
+    score: entry.score,
+    lastActivityAt: entry.lastActivityAt,
+    degraded: entry.degraded,
+  }));
+
+  if (typeof limit === 'number') results = results.slice(0, limit);
+
+  return {
+    data: results,
+    meta: { ...snapshot.meta, window, sortBy },
   };
 }
 
@@ -182,6 +368,7 @@ function createUnifiedDiff(previousContent, nextContent, fileId) {
 }
 
 export async function listMarkdownFiles() {
+  const collectedAtMs = Date.now();
   const files = await Promise.all(Array.from(markdownAllowlist).sort().map(async (fileId) => {
     const absolutePath = path.resolve(docsDir, fileId);
     const stats = await fs.stat(absolutePath);
@@ -197,13 +384,18 @@ export async function listMarkdownFiles() {
 
   return {
     data: files,
-    meta: buildMeta({ allowlistRoot: 'docs', allowlistCount: files.length }),
+    meta: {
+      partial: false,
+      collectedAt: new Date(collectedAtMs).toISOString(),
+      allowlistRoot: 'docs',
+      allowlistCount: files.length,
+    },
   };
 }
 
 export async function readMarkdownFile(fileId) {
   const resolved = resolveAllowedMarkdown(fileId);
-  if (resolved.error) return { error: resolved.error, statusCode: 403 };
+  if (resolved.error) return { error: resolved.error, statusCode: 403, meta: { partial: false, collectedAt: new Date().toISOString() } };
 
   try {
     const content = await fs.readFile(resolved.absolutePath, 'utf8');
@@ -216,7 +408,7 @@ export async function readMarkdownFile(fileId) {
         updatedAt: stats.mtime.toISOString(),
         bytes: Buffer.byteLength(content, 'utf8'),
       },
-      meta: buildMeta({ allowlistRoot: 'docs' }),
+      meta: { partial: false, collectedAt: new Date().toISOString(), allowlistRoot: 'docs' },
       statusCode: 200,
     };
   } catch (error) {
@@ -228,7 +420,7 @@ export async function readMarkdownFile(fileId) {
           retryable: false,
           details: { fileId },
         },
-        meta: baseMeta,
+        meta: { partial: true, collectedAt: new Date().toISOString(), degradeReasons: ['markdown_missing'] },
         statusCode: 404,
       };
     }
@@ -249,7 +441,7 @@ export async function previewMarkdownSave(fileId, nextContent) {
       previousBytes: current.data.bytes,
       nextBytes: Buffer.byteLength(nextContent, 'utf8'),
     },
-    meta: buildMeta({ allowlistRoot: 'docs' }),
+    meta: { partial: false, collectedAt: new Date().toISOString(), allowlistRoot: 'docs' },
     statusCode: 200,
   };
 }
@@ -266,13 +458,13 @@ export async function saveMarkdownFile(fileId, nextContent, expectedContent = un
         retryable: true,
         details: { fileId },
       },
-      meta: buildMeta({ partial: true, degradeReasons: ['stale_expected_content'] }),
+      meta: { partial: true, collectedAt: new Date().toISOString(), degradeReasons: ['stale_expected_content'] },
       statusCode: 409,
     };
   }
 
   const resolved = resolveAllowedMarkdown(fileId);
-  if (resolved.error) return { error: resolved.error, statusCode: 403 };
+  if (resolved.error) return { error: resolved.error, statusCode: 403, meta: { partial: false, collectedAt: new Date().toISOString() } };
 
   await fs.writeFile(resolved.absolutePath, nextContent, 'utf8');
   const diff = createUnifiedDiff(current.data.content, nextContent, fileId);
@@ -288,7 +480,7 @@ export async function saveMarkdownFile(fileId, nextContent, expectedContent = un
       updatedAt: stats.mtime.toISOString(),
       bytes: Buffer.byteLength(nextContent, 'utf8'),
     },
-    meta: buildMeta({ allowlistRoot: 'docs' }),
+    meta: { partial: false, collectedAt: new Date().toISOString(), allowlistRoot: 'docs' },
     statusCode: 200,
   };
 }

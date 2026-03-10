@@ -5,6 +5,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 process.env.NODE_ENV = 'test';
+process.env.OPENCLAW_RUNTIME_DIR = path.resolve(process.cwd(), 'test/fixtures/runtime');
+
 const { startServer } = await import('../src/server.js');
 
 const docsDir = path.resolve(process.cwd(), 'docs');
@@ -30,66 +32,33 @@ async function withServer(run) {
   }
 }
 
-test('GET /api/v1/agents returns dashboard cards', async () => {
+test('GET /api/dashboard returns aggregated dashboard payload', async () => {
   await withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/v1/agents?status=active&limit=1`);
+    const response = await fetch(`${baseUrl}/api/dashboard`);
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assert.equal(payload.data.length, 1);
-    assert.equal(payload.data[0].agentId, 'buding');
-    assert.equal(payload.meta.partial, false);
+    assert.ok(Array.isArray(payload.data.agents));
+    assert.ok(payload.data.agents.some((agent) => agent.agentId === 'buding'));
+    assert.equal(typeof payload.meta.collectedAt, 'string');
+    assert.ok(payload.meta.freshness);
   });
 });
 
-test('GET /api/v1/agents rejects invalid limit', async () => {
+test('GET /api/agents/:id returns detail payload for known agent', async () => {
   await withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/v1/agents?limit=0`);
-    assert.equal(response.status, 400);
-    const payload = await response.json();
-    assert.equal(payload.error.code, 'INVALID_ARGUMENT');
-    assert.match(payload.error.message, />= 1/);
-  });
-});
-
-test('GET /api/v1/leaderboard returns ranked entries with window metadata', async () => {
-  await withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/v1/leaderboard?window=7d&sortBy=stability&limit=1`);
-    assert.equal(response.status, 200);
-    const payload = await response.json();
-    assert.equal(payload.data.length, 1);
-    assert.equal(payload.data[0].agentId, 'buding');
-    assert.equal(payload.data[0].rank, 1);
-    assert.equal(payload.meta.window, '7d');
-    assert.equal(payload.meta.sortBy, 'stability');
-  });
-});
-
-test('GET /api/v1/leaderboard rejects unsupported sort field', async () => {
-  await withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/v1/leaderboard?sortBy=latency`);
-    assert.equal(response.status, 400);
-    const payload = await response.json();
-    assert.equal(payload.error.code, 'INVALID_ARGUMENT');
-    assert.match(payload.error.message, /sortBy/);
-  });
-});
-
-test('GET /api/v1/agents/:id returns detail payload for known agent', async () => {
-  await withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/v1/agents/buding`);
+    const response = await fetch(`${baseUrl}/api/agents/buding`);
     assert.equal(response.status, 200);
     const payload = await response.json();
     assert.equal(payload.data.agentId, 'buding');
-    assert.equal(payload.data.recentEvents.length, 1);
-    assert.equal(payload.data.sourceStatus.length, 5);
-    assert.equal(payload.meta.partial, true);
-    assert.deepEqual(payload.meta.degradeReasons, ['github_issue_cache_reused']);
+    assert.ok(Array.isArray(payload.data.tasks));
+    assert.ok(Array.isArray(payload.data.recentEvents));
+    assert.ok(Array.isArray(payload.data.markdownFiles));
   });
 });
 
-test('GET /api/v1/agents/:id returns 404 envelope for unknown agent', async () => {
+test('GET /api/agents/:id returns 404 envelope for unknown agent', async () => {
   await withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/v1/agents/unknown-agent`);
+    const response = await fetch(`${baseUrl}/api/agents/unknown-agent`);
     assert.equal(response.status, 404);
     const payload = await response.json();
     assert.equal(payload.error.code, 'NOT_FOUND');
@@ -97,9 +66,9 @@ test('GET /api/v1/agents/:id returns 404 envelope for unknown agent', async () =
   });
 });
 
-test('GET /api/v1/markdown-files lists allowlisted markdown files', async () => {
+test('GET /api/markdown/files lists allowlisted markdown files', async () => {
   await withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/v1/markdown-files`);
+    const response = await fetch(`${baseUrl}/api/markdown/files`);
     assert.equal(response.status, 200);
     const payload = await response.json();
     assert.ok(payload.data.some((item) => item.fileId === markdownFileId));
@@ -107,9 +76,9 @@ test('GET /api/v1/markdown-files lists allowlisted markdown files', async () => 
   });
 });
 
-test('GET /api/v1/markdown-files/:fileId returns markdown content', async () => {
+test('GET /api/markdown/read returns markdown content', async () => {
   await withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/v1/markdown-files/${encodeURIComponent(markdownFileId)}`);
+    const response = await fetch(`${baseUrl}/api/markdown/read?fileId=${encodeURIComponent(markdownFileId)}`);
     assert.equal(response.status, 200);
     const payload = await response.json();
     assert.equal(payload.data.fileId, markdownFileId);
@@ -117,10 +86,10 @@ test('GET /api/v1/markdown-files/:fileId returns markdown content', async () => 
   });
 });
 
-test('POST /api/v1/markdown-files/preview-save returns diff before save', async () => {
+test('POST /api/markdown/preview returns diff before save', async () => {
   await withServer(async (baseUrl) => {
     const nextContent = `${originalMarkdown}\n\n<!-- preview -->\n`;
-    const response = await fetch(`${baseUrl}/api/v1/markdown-files/preview-save`, {
+    const response = await fetch(`${baseUrl}/api/markdown/preview`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ fileId: markdownFileId, content: nextContent }),
@@ -132,13 +101,13 @@ test('POST /api/v1/markdown-files/preview-save returns diff before save', async 
   });
 });
 
-test('PUT /api/v1/markdown-files/:fileId saves markdown with expected content guard', async () => {
+test('POST /api/markdown/save saves markdown with expected content guard', async () => {
   await withServer(async (baseUrl) => {
     const nextContent = `${originalMarkdown}\n\n<!-- saved by test -->\n`;
-    const response = await fetch(`${baseUrl}/api/v1/markdown-files/${encodeURIComponent(markdownFileId)}`, {
-      method: 'PUT',
+    const response = await fetch(`${baseUrl}/api/markdown/save`, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: nextContent, expectedContent: originalMarkdown }),
+      body: JSON.stringify({ fileId: markdownFileId, content: nextContent, expectedContent: originalMarkdown }),
     });
     assert.equal(response.status, 200);
     const payload = await response.json();
@@ -152,12 +121,12 @@ test('PUT /api/v1/markdown-files/:fileId saves markdown with expected content gu
   });
 });
 
-test('PUT /api/v1/markdown-files/:fileId rejects non-allowlisted paths', async () => {
+test('POST /api/markdown/save rejects non-allowlisted paths', async () => {
   await withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/v1/markdown-files/${encodeURIComponent('../TASK.md')}`, {
-      method: 'PUT',
+    const response = await fetch(`${baseUrl}/api/markdown/save`, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: 'blocked' }),
+      body: JSON.stringify({ fileId: '../TASK.md', content: 'blocked' }),
     });
     assert.equal(response.status, 403);
     const payload = await response.json();

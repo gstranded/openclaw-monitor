@@ -1,0 +1,12 @@
+[
+  {
+    "at": "2026-03-10T00:03:00Z",
+    "kind": "task",
+    "agent_id": "buding",
+    "message": "assigned task: fixture",
+    "extra": {
+      "task_id": "buding-2",
+      "issue_url": "https://github.com/gstranded/openclaw-monitor/issues/32"
+    }
+  }
+]
