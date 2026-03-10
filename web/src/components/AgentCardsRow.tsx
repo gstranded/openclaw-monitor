@@ -13,7 +13,12 @@ export default function AgentCardsRow({ agents }: { agents: AgentSummary[] }) {
   return (
     <div className="agentsRow" role="list">
       {agents.map((a) => (
-        <article key={a.id} className="agentCard" role="listitem">
+        <a
+          key={a.id}
+          className="agentCard agentCardLink"
+          role="listitem"
+          href={`/agents/${encodeURIComponent(a.id)}`}
+        >
           <div className="agentTop">
             <div className="agentName">{a.name || a.id}</div>
             <div className={`agentStatus s-${a.status || 'unknown'}`}>{a.status || 'unknown'}</div>
@@ -35,7 +40,7 @@ export default function AgentCardsRow({ agents }: { agents: AgentSummary[] }) {
           <div className="agentTask" title={a.currentTask || ''}>
             {a.currentTask ? a.currentTask : <span className="muted">No current task</span>}
           </div>
-        </article>
+        </a>
       ))}
     </div>
   )

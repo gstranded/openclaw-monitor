@@ -11,9 +11,11 @@ npm test
 npm start
 ```
 
-API base: `http://127.0.0.1:3000/api/v1/...`
+API base (preferred): `http://127.0.0.1:3000/api/...`
 
-## Frontend (Dashboard)
+Back-compat (legacy): `http://127.0.0.1:3000/api/v1/...`
+
+## Frontend (Dashboard + Agent detail + Markdown)
 
 ```bash
 cd web
@@ -22,3 +24,9 @@ npm run dev
 ```
 
 The Vite dev server proxies `/api` to `http://127.0.0.1:3000`.
+
+Routes (frontend):
+- `/` dashboard
+- `/agents/:agentId` agent detail
+- `/markdown` markdown allowlist list
+- `/markdown/:fileId` markdown editor (preview diff + save)
