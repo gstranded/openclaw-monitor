@@ -1,0 +1,18 @@
+{
+  "buding": {
+    "name": "布丁",
+    "emoji": "🍮",
+    "role": "后端开发",
+    "score": 40,
+    "updated_at": "2026-03-10T00:00:00Z",
+    "history": []
+  },
+  "naicha": {
+    "name": "奶茶",
+    "emoji": "🧋",
+    "role": "前端开发",
+    "score": 60,
+    "updated_at": "2026-03-10T00:00:00Z",
+    "history": []
+  }
+}

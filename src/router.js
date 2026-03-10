@@ -1,6 +1,7 @@
 import {
   createNotFound,
   getAgentDetail,
+  getDashboard,
   getLeaderboard,
   listAgents,
   listMarkdownFiles,
@@ -11,7 +12,7 @@ import {
 
 const AGENT_STATUSES = new Set(['active', 'idle', 'blocked', 'offline', 'unknown']);
 const LEADERBOARD_WINDOWS = new Set(['24h', '7d']);
-const LEADERBOARD_SORT_FIELDS = new Set(['score', 'throughput', 'stability']);
+const LEADERBOARD_SORT_FIELDS = new Set(['score', 'activity']);
 
 function json(response, statusCode, payload) {
   response.writeHead(statusCode, {
@@ -85,6 +86,14 @@ async function readJsonBody(request) {
   }
 }
 
+function sendDataResult(response, payload) {
+  if (payload?.error) {
+    json(response, payload.statusCode ?? 400, { error: payload.error, meta: payload.meta ?? createMeta() });
+    return;
+  }
+  json(response, payload.statusCode ?? 200, { data: payload.data, meta: payload.meta ?? createMeta() });
+}
+
 export async function route(request, response, url) {
   try {
     if (request.method === 'GET' && url.pathname === '/health') {
@@ -92,23 +101,87 @@ export async function route(request, response, url) {
       return;
     }
 
+    // V1 (requested) routes
+    if (request.method === 'GET' && url.pathname === '/api/dashboard') {
+      const payload = await getDashboard();
+      json(response, 200, payload);
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname.startsWith('/api/agents/')) {
+      const agentId = decodeURIComponent(url.pathname.replace('/api/agents/', ''));
+      const payload = await getAgentDetail(agentId);
+      if (!payload) {
+        const meta = { partial: false, collectedAt: new Date().toISOString(), degradeReasons: [] };
+        json(response, 404, createNotFound(agentId, meta));
+        return;
+      }
+      json(response, 200, payload);
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/markdown/files') {
+      const payload = await listMarkdownFiles();
+      json(response, 200, payload);
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/markdown/read') {
+      const fileId = url.searchParams.get('fileId');
+      if (!fileId) {
+        json(response, 400, createInvalidArgument("Query parameter 'fileId' is required"));
+        return;
+      }
+      const payload = await readMarkdownFile(fileId);
+      sendDataResult(response, payload);
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/markdown/preview') {
+      const body = await readJsonBody(request);
+      if (typeof body.fileId !== 'string' || typeof body.content !== 'string') {
+        json(response, 400, createInvalidArgument("'fileId' and 'content' are required string fields"));
+        return;
+      }
+      const payload = await previewMarkdownSave(body.fileId, body.content);
+      sendDataResult(response, payload);
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/markdown/save') {
+      const body = await readJsonBody(request);
+      if (typeof body.fileId !== 'string' || typeof body.content !== 'string') {
+        json(response, 400, createInvalidArgument("'fileId' and 'content' are required string fields"));
+        return;
+      }
+      const payload = await saveMarkdownFile(body.fileId, body.content, body.expectedContent);
+      sendDataResult(response, payload);
+      return;
+    }
+
+    // Back-compat aliases (existing routes)
     if (request.method === 'GET' && url.pathname === '/api/v1/agents') {
       const limit = parseInteger(url.searchParams.get('limit'), { name: 'limit', min: 1, max: 200 });
       const status = parseEnum(url.searchParams.get('status'), AGENT_STATUSES, 'status');
       if (limit.error) return json(response, 400, limit.error);
       if (status.error) return json(response, 400, status.error);
-      json(response, 200, listAgents({
+      const payload = await listAgents({
         status: status.value,
         role: url.searchParams.get('role') ?? undefined,
         limit: limit.value,
-      }));
+      });
+      json(response, 200, payload);
       return;
     }
 
     if (request.method === 'GET' && url.pathname.startsWith('/api/v1/agents/')) {
       const agentId = decodeURIComponent(url.pathname.replace('/api/v1/agents/', ''));
-      const payload = getAgentDetail(agentId);
-      if (!payload) return json(response, 404, createNotFound(agentId));
+      const payload = await getAgentDetail(agentId);
+      if (!payload) {
+        const meta = { partial: false, collectedAt: new Date().toISOString(), degradeReasons: [] };
+        json(response, 404, createNotFound(agentId, meta));
+        return;
+      }
       json(response, 200, payload);
       return;
     }
@@ -120,19 +193,21 @@ export async function route(request, response, url) {
       if (limit.error) return json(response, 400, limit.error);
       if (window.error) return json(response, 400, window.error);
       if (sortBy.error) return json(response, 400, sortBy.error);
-      json(response, 200, getLeaderboard({ window: window.value ?? '24h', sortBy: sortBy.value ?? 'score', limit: limit.value }));
+      const payload = await getLeaderboard({ window: window.value ?? '24h', sortBy: sortBy.value ?? 'score', limit: limit.value });
+      json(response, 200, payload);
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/api/v1/markdown-files') {
-      json(response, 200, await listMarkdownFiles());
+      const payload = await listMarkdownFiles();
+      json(response, 200, payload);
       return;
     }
 
     if (request.method === 'GET' && url.pathname.startsWith('/api/v1/markdown-files/')) {
       const fileId = decodeURIComponent(url.pathname.replace('/api/v1/markdown-files/', ''));
       const payload = await readMarkdownFile(fileId);
-      json(response, payload.statusCode, payload.error ? { error: payload.error, meta: payload.meta } : { data: payload.data, meta: payload.meta });
+      sendDataResult(response, payload);
       return;
     }
 
@@ -143,7 +218,7 @@ export async function route(request, response, url) {
         return;
       }
       const payload = await previewMarkdownSave(body.fileId, body.content);
-      json(response, payload.statusCode, payload.error ? { error: payload.error, meta: payload.meta } : { data: payload.data, meta: payload.meta });
+      sendDataResult(response, payload);
       return;
     }
 
@@ -155,7 +230,7 @@ export async function route(request, response, url) {
         return;
       }
       const payload = await saveMarkdownFile(fileId, body.content, body.expectedContent);
-      json(response, payload.statusCode, payload.error ? { error: payload.error, meta: payload.meta } : { data: payload.data, meta: payload.meta });
+      sendDataResult(response, payload);
       return;
     }
 
