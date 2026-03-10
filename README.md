@@ -7,10 +7,14 @@ This repo contains the **backend aggregation API** (Node http server) and a **Da
 Prereqs: Node.js >= 20.
 
 ```bash
+# from repo root
 npm install
 npm run check
 npm test
+
+export OPENCLAW_RUNTIME_DIR=/abs/path/to/claw_team/runtime
 npm start
+# -> http://127.0.0.1:3000
 ```
 
 API base (preferred): `http://127.0.0.1:3000/api/...`
@@ -59,6 +63,18 @@ When enabled by config:
 - Backup is written to: `.rollback/markdown-edits/`
 - Audit record is appended to: `.audit/markdown-edits.jsonl`
 
+## One-click local run
+
+```bash
+export OPENCLAW_RUNTIME_DIR=/abs/path/to/claw_team/runtime
+./scripts/run_local.sh
+```
+
+Notes:
+
+- `OPENCLAW_RUNTIME_DIR` should point at a directory containing `scores.json`, `tasks.json`, and `events.json` (for example `claw_team/runtime`).
+- If a `web/` frontend exists, `./scripts/run_local.sh` will attempt to start it as well (best-effort). Otherwise it only starts the backend.
+
 ## Frontend (Dashboard + Agent detail + Markdown)
 
 ```bash
@@ -74,3 +90,11 @@ Routes (frontend):
 - `/agents/:agentId` agent detail
 - `/markdown` markdown allowlist list
 - `/markdown/:fileId` markdown editor (preview diff + save)
+
+## CI
+
+GitHub Actions runs:
+
+- backend: `npm run check` + `npm test`
+- markdown boundaries validation (`scripts/check_markdown_boundaries.py`)
+- frontend build only when `web/package.json` exists
