@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import type { AgentSummary } from '../lib/dashboardTypes'
 
 function fmtTime(ts?: string) {
@@ -13,29 +14,31 @@ export default function AgentCardsRow({ agents }: { agents: AgentSummary[] }) {
   return (
     <div className="agentsRow" role="list">
       {agents.map((a) => (
-        <article key={a.id} className="agentCard" role="listitem">
-          <div className="agentTop">
-            <div className="agentName">{a.name || a.id}</div>
-            <div className={`agentStatus s-${a.status || 'unknown'}`}>{a.status || 'unknown'}</div>
-          </div>
-          <div className="agentMeta">
-            <div className="kv">
-              <span className="k">role</span>
-              <span className="v">{a.role || '—'}</span>
+        <Link key={a.id} to={`/agents/${encodeURIComponent(a.id)}`} className="agentCardLink" role="listitem">
+          <article className="agentCard">
+            <div className="agentTop">
+              <div className="agentName">{a.name || a.id}</div>
+              <div className={`agentStatus s-${a.status || 'unknown'}`}>{a.status || 'unknown'}</div>
             </div>
-            <div className="kv">
-              <span className="k">score</span>
-              <span className="v">{typeof a.score === 'number' ? a.score : '—'}</span>
+            <div className="agentMeta">
+              <div className="kv">
+                <span className="k">role</span>
+                <span className="v">{a.role || '—'}</span>
+              </div>
+              <div className="kv">
+                <span className="k">score</span>
+                <span className="v">{typeof a.score === 'number' ? a.score : '—'}</span>
+              </div>
+              <div className="kv">
+                <span className="k">last seen</span>
+                <span className="v">{fmtTime(a.lastSeenAt)}</span>
+              </div>
             </div>
-            <div className="kv">
-              <span className="k">last seen</span>
-              <span className="v">{fmtTime(a.lastSeenAt)}</span>
+            <div className="agentTask" title={a.currentTask || ''}>
+              {a.currentTask ? a.currentTask : <span className="muted">No current task</span>}
             </div>
-          </div>
-          <div className="agentTask" title={a.currentTask || ''}>
-            {a.currentTask ? a.currentTask : <span className="muted">No current task</span>}
-          </div>
-        </article>
+          </article>
+        </Link>
       ))}
     </div>
   )

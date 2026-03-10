@@ -5,9 +5,9 @@ import Leaderboard from '../components/Leaderboard'
 import SectionCard from '../components/SectionCard'
 import StatusBadge from '../components/StatusBadge'
 import Timeline from '../components/Timeline'
-import type { DashboardHealth, DashboardResponse } from '../lib/dashboardTypes'
+import type { DashboardHealth, DashboardResponse, EventItem } from '../lib/dashboardTypes'
 import { HttpError } from '../lib/fetchJson'
-import { API_BASE, DASHBOARD_POLL_MS } from '../lib/config'
+import { API_BASE, API_V1_BASE, DASHBOARD_POLL_MS } from '../lib/config'
 import { loadDashboardSnapshot } from '../lib/dashboardApi'
 
 function safeHealth(h?: string): DashboardHealth {
@@ -28,6 +28,8 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null)
   const [polling, setPolling] = useState(false)
+  const [streamState, setStreamState] = useState<'connecting' | 'live' | 'fallback'>('connecting')
+  const [liveEvents, setLiveEvents] = useState<EventItem[]>([])
 
   const abortRef = useRef<AbortController | null>(null)
 
@@ -82,10 +84,81 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    const candidates = [
+      `${API_BASE.replace(/\/$/, '')}/events/stream`,
+      `${API_V1_BASE}/events/stream`
+    ]
+
+    let es: EventSource | null = null
+    let idx = 0
+    let closed = false
+
+    const toEventItem = (raw: any): EventItem | null => {
+      if (!raw || typeof raw !== 'object') return null
+      const ts = raw.timestamp || raw.ts || new Date().toISOString()
+      const id = String(raw.id || raw.sequence || `${Date.now()}-${Math.random()}`)
+      const type = raw.type || raw.kind
+      const msg =
+        raw.message ||
+        raw.summary ||
+        raw.title ||
+        raw?.payload?.message ||
+        raw?.payload?.summary ||
+        (typeof raw === 'string' ? raw : JSON.stringify(raw))
+
+      const sev = raw.severity || raw.level
+      const severity = sev === 'error' ? 'error' : sev === 'warning' || sev === 'warn' ? 'warn' : 'info'
+
+      return { id, ts, type, message: msg, severity }
+    }
+
+    function connect(url: string) {
+      try {
+        setStreamState('connecting')
+        es = new EventSource(url)
+        es.onopen = () => setStreamState('live')
+        es.onmessage = (evt) => {
+          try {
+            const parsed = JSON.parse(evt.data)
+            const item = toEventItem(parsed)
+            if (!item) return
+            setLiveEvents((prev) => [item, ...prev].slice(0, 50))
+          } catch {
+            // ignore non-json payloads
+          }
+        }
+        es.onerror = () => {
+          if (closed) return
+          es?.close()
+          es = null
+          idx += 1
+          if (idx < candidates.length) {
+            connect(candidates[idx])
+          } else {
+            setStreamState('fallback')
+          }
+        }
+      } catch {
+        idx += 1
+        if (idx < candidates.length) connect(candidates[idx])
+        else setStreamState('fallback')
+      }
+    }
+
+    connect(candidates[idx])
+
+    return () => {
+      closed = true
+      es?.close()
+    }
+  }, [])
+
   const agents = data?.agents ?? []
   const leaderboard = data?.leaderboard ?? []
   const timeline = data?.timeline ?? []
-  const events = data?.events ?? []
+  const snapshotEvents = data?.events ?? []
+  const events = liveEvents.length ? [...liveEvents, ...snapshotEvents] : snapshotEvents
 
   return (
     <div className="page">
@@ -106,6 +179,9 @@ export default function DashboardPage() {
             <span className="sep">·</span>
             <StatusBadge health={health} />
             {polling ? <span className="muted">auto-updating…</span> : null}
+            <span className="sep">·</span>
+            <span className="muted">stream</span>
+            <span>{streamState === 'live' ? 'SSE' : streamState}</span>
           </div>
           <div className="btnRow">
             <button className="btn" onClick={() => void loadOnce({ silent: false })} disabled={loading}>
