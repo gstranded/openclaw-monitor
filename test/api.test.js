@@ -164,3 +164,42 @@ test('PUT /api/v1/markdown-files/:fileId rejects non-allowlisted paths', async (
     assert.equal(payload.error.code, 'FORBIDDEN_PATH');
   });
 });
+
+test('GET / serves dashboard UI html', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/`);
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    assert.match(text, /Agent 状态卡片/);
+    assert.match(text, /openclaw-monitor/);
+  });
+});
+
+test('GET /agents/:id serves agent detail UI html', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/agents/buding`);
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    assert.match(text, /Agent 详情/);
+    assert.match(text, /recentEvents|最近活动/);
+  });
+});
+
+test('GET /markdown serves markdown list UI html', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/markdown`);
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    assert.match(text, /Markdown allowlist/);
+  });
+});
+
+test('GET /markdown/:fileId serves markdown editor UI html', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/markdown/${encodeURIComponent(markdownFileId)}`);
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    assert.match(text, /Markdown 编辑/);
+    assert.match(text, /Preview diff/);
+  });
+});

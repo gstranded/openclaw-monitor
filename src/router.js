@@ -1,3 +1,6 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
 import {
   createNotFound,
   getAgentDetail,
@@ -8,16 +11,41 @@ import {
   readMarkdownFile,
   saveMarkdownFile,
 } from './data.js';
+import {
+  renderAgentPage,
+  renderDashboardPage,
+  renderMarkdownEditorPage,
+  renderMarkdownListPage,
+} from './ui.js';
 
 const AGENT_STATUSES = new Set(['active', 'idle', 'blocked', 'offline', 'unknown']);
 const LEADERBOARD_WINDOWS = new Set(['24h', '7d']);
 const LEADERBOARD_SORT_FIELDS = new Set(['score', 'throughput', 'stability']);
+
+const staticDir = path.resolve(process.cwd(), 'src', 'public');
+const staticAllowlist = new Set(['shared.js', 'dashboard.js', 'agent.js', 'markdown-list.js', 'markdown-editor.js']);
 
 function json(response, statusCode, payload) {
   response.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
   });
   response.end(JSON.stringify(payload, null, 2));
+}
+
+function html(response, statusCode, payload) {
+  response.writeHead(statusCode, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+  });
+  response.end(payload);
+}
+
+function javascript(response, statusCode, payload) {
+  response.writeHead(statusCode, {
+    'Content-Type': 'text/javascript; charset=utf-8',
+    'Cache-Control': 'no-store',
+  });
+  response.end(payload);
 }
 
 function createMeta() {
@@ -89,6 +117,47 @@ export async function route(request, response, url) {
   try {
     if (request.method === 'GET' && url.pathname === '/health') {
       json(response, 200, { ok: true });
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname.startsWith('/static/')) {
+      const fileName = decodeURIComponent(url.pathname.replace('/static/', ''));
+      if (!staticAllowlist.has(fileName)) {
+        javascript(response, 404, `// 404: static asset '${fileName}' not found`);
+        return;
+      }
+
+      const absolutePath = path.resolve(staticDir, fileName);
+      if (!absolutePath.startsWith(`${staticDir}${path.sep}`)) {
+        javascript(response, 403, '// 403: forbidden static asset path');
+        return;
+      }
+
+      const content = await fs.readFile(absolutePath, 'utf8');
+      javascript(response, 200, content);
+      return;
+    }
+
+    // Minimal UI (phase-1 frontend) — pure HTML + fetch() to the read-only APIs.
+    if (request.method === 'GET' && url.pathname === '/') {
+      html(response, 200, renderDashboardPage());
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/markdown') {
+      html(response, 200, renderMarkdownListPage());
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname.startsWith('/markdown/')) {
+      const fileId = decodeURIComponent(url.pathname.replace('/markdown/', ''));
+      html(response, 200, renderMarkdownEditorPage(fileId));
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname.startsWith('/agents/')) {
+      const agentId = decodeURIComponent(url.pathname.replace('/agents/', ''));
+      html(response, 200, renderAgentPage(agentId));
       return;
     }
 
