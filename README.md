@@ -6,7 +6,7 @@
 
 ## 独立开发声明（Important）
 
-- 本仓库由 `claw_team` 团队基于自身协作/运维需求独立开发，**不是 OpenClaw 官方仓库**。
+- 本仓库由openclaw团队（养了6只龙虾）基于团队协作/运维需求独立开发，纯由openclaw自行开发，自行提Issue，自行pull&PR，自行审核。
 - 项目第一目标是“可观察/可审计/可回滚”，因此对写操作（例如 Markdown 保存）采用 **allowlist + 边界校验 + rollback + audit** 的保守策略。
 
 ---
