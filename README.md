@@ -194,8 +194,8 @@ npm run dev
 - 布丁（后端）：聚合 API + Markdown allowlist 受控接口（PR #36 等）
 - 狗子（Ops/CI）：CI 门禁与一键本地运行脚本（见 `scripts/run_local.sh` 与 CI workflow）
 - 闪电（QA）：Phase 2 验收与回归（见 `docs/qa/phase2-report.md`）
-- 汤圆（前端与文档）：Agent 详情页 + Markdown 管理 UI（PR #45 / #46），以及文档对外呈现（本任务）
-- 奥利（主控/PM）：任务拆分、节奏推进、集成与 review（例如修复 API envelope 的对齐）
+- 汤圆（前端与文档）：Agent 详情页 + Markdown 管理 UI（PR #46），以及文档对外呈现（本 PR）
+- 奥利（主控/PM）：任务拆分、节奏推进、集成与 review；并补齐前后端对齐修复（PR #48：Dashboard /api/dashboard envelope 兼容）
 
 ## 贡献指南
 
