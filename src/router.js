@@ -6,6 +6,7 @@ import {
   listAgents,
   listMarkdownFiles,
   previewMarkdownSave,
+  readEventsForStream,
   readMarkdownFile,
   saveMarkdownFile,
 } from './data.js';
@@ -94,6 +95,65 @@ function sendDataResult(response, payload) {
   json(response, payload.statusCode ?? 200, { data: payload.data, meta: payload.meta ?? createMeta() });
 }
 
+function getActor(request, body = {}) {
+  if (typeof body.actor === 'string' && body.actor.trim()) return body.actor.trim();
+  const header = request.headers['x-openclaw-actor'] ?? request.headers['x-actor'] ?? request.headers['x-user'];
+  if (typeof header === 'string' && header.trim()) return header.trim();
+  if (Array.isArray(header) && header.length && header[0].trim()) return header[0].trim();
+  return 'unknown';
+}
+
+function writeSse(response, { event, data }) {
+  if (event) response.write(`event: ${event}\n`);
+  const payload = typeof data === 'string' ? data : JSON.stringify(data);
+  // SSE requires each data line prefixed.
+  for (const line of payload.split('\n')) {
+    response.write(`data: ${line}\n`);
+  }
+  response.write('\n');
+}
+
+async function streamEvents(request, response) {
+  response.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+  });
+
+  response.write(': connected\n\n');
+
+  let lastAtMs = 0;
+  let closed = false;
+
+  const pollMs = Number.parseInt(process.env.OPENCLAW_SSE_POLL_MS ?? '1000', 10);
+
+  const sendBatch = async () => {
+    const batch = await readEventsForStream({ afterMs: lastAtMs });
+
+    writeSse(response, { event: 'meta', data: batch.meta });
+
+    for (const evt of batch.data) {
+      writeSse(response, { event: 'event', data: evt });
+      const atMs = new Date(evt?.at ?? 0).getTime();
+      if (!Number.isNaN(atMs)) lastAtMs = Math.max(lastAtMs, atMs);
+    }
+  };
+
+  await sendBatch();
+
+  const interval = setInterval(() => {
+    if (closed) return;
+    sendBatch().catch((error) => {
+      writeSse(response, { event: 'error', data: { message: error?.message ?? 'stream error' } });
+    });
+  }, Number.isFinite(pollMs) && pollMs > 200 ? pollMs : 1000);
+
+  request.on('close', () => {
+    closed = true;
+    clearInterval(interval);
+  });
+}
+
 export async function route(request, response, url) {
   try {
     if (request.method === 'GET' && url.pathname === '/health') {
@@ -105,6 +165,11 @@ export async function route(request, response, url) {
     if (request.method === 'GET' && url.pathname === '/api/dashboard') {
       const payload = await getDashboard();
       json(response, 200, payload);
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/events/stream') {
+      await streamEvents(request, response);
       return;
     }
 
@@ -154,7 +219,7 @@ export async function route(request, response, url) {
         json(response, 400, createInvalidArgument("'fileId' and 'content' are required string fields"));
         return;
       }
-      const payload = await saveMarkdownFile(body.fileId, body.content, body.expectedContent);
+      const payload = await saveMarkdownFile(body.fileId, body.content, body.expectedContent, { actor: getActor(request, body) });
       sendDataResult(response, payload);
       return;
     }
@@ -229,7 +294,7 @@ export async function route(request, response, url) {
         json(response, 400, createInvalidArgument("'content' is a required string field"));
         return;
       }
-      const payload = await saveMarkdownFile(fileId, body.content, body.expectedContent);
+      const payload = await saveMarkdownFile(fileId, body.content, body.expectedContent, { actor: getActor(request, body) });
       sendDataResult(response, payload);
       return;
     }

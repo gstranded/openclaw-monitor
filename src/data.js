@@ -1,17 +1,30 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
-const docsDir = path.resolve(process.cwd(), 'docs');
-const markdownAllowlist = new Set([
-  'dashboard-agent-aggregation.examples.md',
-  'self-monitoring-mvp-backend-contract.md',
-]);
+const repoRoot = process.cwd();
+const configDir = path.resolve(repoRoot, 'config');
+const markdownBoundariesPath = process.env.OPENCLAW_MARKDOWN_BOUNDARIES_PATH
+  ? path.resolve(process.env.OPENCLAW_MARKDOWN_BOUNDARIES_PATH)
+  : path.resolve(configDir, 'markdown-boundaries.json');
 
 function toDate(value) {
   if (!value) return undefined;
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return undefined;
   return parsed;
+}
+
+function hashContent(content) {
+  return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
+function normalizeSlashes(value) {
+  return String(value ?? '').replaceAll('\\', '/');
+}
+
+function isWithin(root, absolutePath) {
+  return absolutePath === root || absolutePath.startsWith(`${root}${path.sep}`);
 }
 
 async function pathExists(filePath) {
@@ -27,7 +40,7 @@ async function resolveRuntimeRoot() {
   if (process.env.OPENCLAW_RUNTIME_DIR) return path.resolve(process.env.OPENCLAW_RUNTIME_DIR);
 
   // Heuristic: walk up a few levels looking for tasks.json.
-  let cursor = process.cwd();
+  let cursor = repoRoot;
   for (let i = 0; i < 8; i += 1) {
     const candidate = path.join(cursor, 'tasks.json');
     if (await pathExists(candidate)) return cursor;
@@ -154,8 +167,8 @@ async function loadSnapshot() {
 
 function computeActiveTask(tasksForAgent) {
   const sorted = [...tasksForAgent].sort((a, b) => {
-    const aAt = toDate(a.updated_at || a.updated_at || a.created_at)?.getTime() ?? 0;
-    const bAt = toDate(b.updated_at || b.updated_at || b.created_at)?.getTime() ?? 0;
+    const aAt = toDate(a.updated_at || a.created_at)?.getTime() ?? 0;
+    const bAt = toDate(b.updated_at || b.created_at)?.getTime() ?? 0;
     return bAt - aAt;
   });
 
@@ -326,89 +339,254 @@ export async function getLeaderboard({ limit, sortBy = 'score', window = '24h' }
   };
 }
 
-function resolveAllowedMarkdown(fileId) {
-  if (!markdownAllowlist.has(fileId)) {
-    return {
-      error: {
-        code: 'FORBIDDEN_PATH',
-        message: `Markdown file '${fileId}' is not in the allowlist`,
-        retryable: false,
-        details: { fileId, allowlist: Array.from(markdownAllowlist) },
-      },
-    };
-  }
+// ---- Event stream helpers (SSE) ----
 
-  const absolutePath = path.resolve(docsDir, fileId);
-  if (!absolutePath.startsWith(`${docsDir}${path.sep}`)) {
-    return {
-      error: {
-        code: 'FORBIDDEN_PATH',
-        message: `Markdown file '${fileId}' resolves outside the allowlist root`,
-        retryable: false,
-        details: { fileId },
-      },
-    };
-  }
+export async function readEventsForStream({ afterMs } = {}) {
+  const collectedAtMs = Date.now();
+  const runtimeRoot = await resolveRuntimeRoot();
+  const events = await loadJson(runtimeRoot, 'events.json');
 
-  return { absolutePath };
+  const sources = { events };
+  const meta = buildMeta(collectedAtMs, sources);
+
+  const items = Array.isArray(events.ok ? events.data : []) ? (events.ok ? events.data : []) : [];
+  const filtered = typeof afterMs === 'number'
+    ? items.filter((evt) => (toDate(evt?.at)?.getTime() ?? 0) > afterMs)
+    : items;
+
+  return {
+    data: filtered,
+    meta,
+  };
 }
 
-function createUnifiedDiff(previousContent, nextContent, fileId) {
-  if (previousContent === nextContent) {
-    return `--- a/${fileId}\n+++ b/${fileId}\n@@ no changes @@`;
+// ---- Markdown boundaries + allowlist/rollback/audit ----
+
+let cachedBoundaries = null;
+let cachedBoundariesMtimeMs = null;
+
+async function loadMarkdownBoundaries() {
+  try {
+    const stat = await fs.stat(markdownBoundariesPath);
+    if (cachedBoundaries && cachedBoundariesMtimeMs === stat.mtimeMs) return cachedBoundaries;
+    const raw = await fs.readFile(markdownBoundariesPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    cachedBoundaries = parsed;
+    cachedBoundariesMtimeMs = stat.mtimeMs;
+    return parsed;
+  } catch {
+    // Conservative fallback: nothing writable.
+    return {
+      version: 0,
+      mode: 'deny-all',
+      approvedMarkdownRoots: [],
+      deniedPathPrefixes: ['.'],
+      deniedPathFragments: ['..'],
+      deniedExactNames: [],
+      allowedExtensions: ['.md', '.markdown'],
+      maxFileSizeBytes: 0,
+      requireBackupBeforeWrite: false,
+      backupDir: '.rollback/markdown-edits',
+      requireAuditLog: false,
+      auditLogPath: '.audit/markdown-edits.jsonl',
+    };
+  }
+}
+
+function matchApprovedRoot(relPath, patterns = []) {
+  const normalized = normalizeSlashes(relPath);
+  return patterns.some((pattern) => {
+    const normalizedPattern = normalizeSlashes(pattern);
+    if (normalizedPattern.endsWith('**')) {
+      const prefix = normalizedPattern.slice(0, normalizedPattern.length - 2);
+      return normalized.startsWith(prefix);
+    }
+    if (normalizedPattern.endsWith('*')) {
+      const prefix = normalizedPattern.slice(0, normalizedPattern.length - 1);
+      return normalized.startsWith(prefix);
+    }
+    return normalized === normalizedPattern;
+  });
+}
+
+function createMarkdownForbidden(code, message, details = undefined) {
+  return {
+    code,
+    message,
+    retryable: false,
+    ...(details ? { details } : {}),
+  };
+}
+
+async function resolveMarkdownPath(fileId, { forWrite } = {}) {
+  const boundaries = await loadMarkdownBoundaries();
+
+  const raw = normalizeSlashes(fileId).trim();
+  if (!raw) {
+    return { error: createMarkdownForbidden('INVALID_ARGUMENT', "'fileId' is required") };
   }
 
-  return [
-    `--- a/${fileId}`,
-    `+++ b/${fileId}`,
-    '@@ -1 +1 @@',
-    ...previousContent.split('\n').map((line) => `-${line}`),
-    ...nextContent.split('\n').map((line) => `+${line}`),
-  ].join('\n');
+  // Back-compat: if passing a bare filename, assume docs/<file>.
+  const normalized = raw.includes('/') ? raw.replace(/^\/+/, '') : `docs/${raw}`;
+
+  const relPath = normalizeSlashes(normalized);
+  if (boundaries.deniedPathFragments?.some((fragment) => relPath.includes(fragment))) {
+    return { error: createMarkdownForbidden('FORBIDDEN_PATH', `Markdown path '${fileId}' contains a forbidden fragment`, { fileId }) };
+  }
+
+  if (relPath.startsWith('/')) {
+    return { error: createMarkdownForbidden('FORBIDDEN_PATH', 'Absolute paths are not allowed', { fileId }) };
+  }
+
+  if (boundaries.deniedPathPrefixes?.some((prefix) => relPath.startsWith(normalizeSlashes(prefix)))) {
+    return { error: createMarkdownForbidden('FORBIDDEN_PATH', `Markdown path '${fileId}' is denied by prefix rule`, { fileId }) };
+  }
+
+  const baseName = path.basename(relPath);
+  if (boundaries.deniedExactNames?.includes(baseName)) {
+    return { error: createMarkdownForbidden('FORBIDDEN_PATH', `Markdown path '${fileId}' is denied by name rule`, { fileId }) };
+  }
+
+  if (!matchApprovedRoot(relPath, boundaries.approvedMarkdownRoots ?? [])) {
+    return {
+      error: createMarkdownForbidden('FORBIDDEN_PATH', `Markdown path '${fileId}' is outside approved roots`, {
+        fileId,
+        approvedMarkdownRoots: boundaries.approvedMarkdownRoots ?? [],
+      }),
+    };
+  }
+
+  const ext = path.extname(relPath);
+  if (boundaries.allowedExtensions && !boundaries.allowedExtensions.includes(ext)) {
+    return {
+      error: createMarkdownForbidden('FORBIDDEN_EXTENSION', `Extension '${ext}' is not allowed`, {
+        fileId,
+        allowedExtensions: boundaries.allowedExtensions,
+      }),
+    };
+  }
+
+  const absolutePath = path.resolve(repoRoot, relPath);
+  if (!isWithin(repoRoot, absolutePath)) {
+    return { error: createMarkdownForbidden('FORBIDDEN_PATH', 'Resolved path escapes repository root', { fileId }) };
+  }
+
+  if (forWrite) {
+    const exists = await pathExists(absolutePath);
+    if (!exists) {
+      return { error: createMarkdownForbidden('NOT_FOUND', `Markdown file '${fileId}' not found`, { fileId }) };
+    }
+  }
+
+  return { relPath, absolutePath, boundaries };
+}
+
+async function ensureDir(dirPath) {
+  await fs.mkdir(dirPath, { recursive: true });
+}
+
+function resolveDataPath(relativePath) {
+  const base = process.env.OPENCLAW_DATA_DIR ? path.resolve(process.env.OPENCLAW_DATA_DIR) : repoRoot;
+  const absolute = path.resolve(base, relativePath);
+  if (!isWithin(base, absolute)) {
+    return { error: createMarkdownForbidden('FORBIDDEN_PATH', 'Data path escapes OPENCLAW_DATA_DIR root', { relativePath }) };
+  }
+  return { base, absolute };
+}
+
+async function walkMarkdownFiles(rootRelative) {
+  const absolute = path.resolve(repoRoot, rootRelative);
+  if (!isWithin(repoRoot, absolute)) return [];
+  if (!(await pathExists(absolute))) return [];
+
+  const results = [];
+  const queue = [{ rel: rootRelative, abs: absolute }];
+
+  while (queue.length) {
+    const next = queue.pop();
+    const entries = await fs.readdir(next.abs, { withFileTypes: true });
+    for (const entry of entries) {
+      const relChild = normalizeSlashes(path.posix.join(next.rel, entry.name));
+      const absChild = path.resolve(next.abs, entry.name);
+      if (entry.isDirectory()) {
+        queue.push({ rel: relChild, abs: absChild });
+      } else if (entry.isFile()) {
+        results.push({ rel: relChild, abs: absChild });
+      }
+    }
+  }
+
+  return results;
 }
 
 export async function listMarkdownFiles() {
   const collectedAtMs = Date.now();
-  const files = await Promise.all(Array.from(markdownAllowlist).sort().map(async (fileId) => {
-    const absolutePath = path.resolve(docsDir, fileId);
-    const stats = await fs.stat(absolutePath);
-    return {
-      fileId,
-      path: `docs/${fileId}`,
-      name: path.basename(fileId),
-      sizeBytes: stats.size,
-      updatedAt: stats.mtime.toISOString(),
-      writable: true,
-    };
-  }));
+  const boundaries = await loadMarkdownBoundaries();
+  const patterns = boundaries.approvedMarkdownRoots ?? [];
+
+  const rootPrefixes = patterns
+    .map((pattern) => normalizeSlashes(pattern))
+    .filter((pattern) => pattern.endsWith('/**'))
+    .map((pattern) => pattern.slice(0, pattern.length - 3));
+
+  const denyPrefixes = (boundaries.deniedPathPrefixes ?? []).map((prefix) => normalizeSlashes(prefix));
+
+  const seen = new Set();
+  const files = [];
+
+  for (const prefix of rootPrefixes) {
+    const walked = await walkMarkdownFiles(prefix);
+    for (const file of walked) {
+      const rel = normalizeSlashes(file.rel);
+      if (seen.has(rel)) continue;
+      seen.add(rel);
+
+      if (denyPrefixes.some((deny) => rel.startsWith(deny))) continue;
+      const ext = path.extname(rel);
+      if (boundaries.allowedExtensions && !boundaries.allowedExtensions.includes(ext)) continue;
+
+      const stats = await fs.stat(file.abs);
+      files.push({
+        fileId: rel,
+        path: rel,
+        name: path.basename(rel),
+        sizeBytes: stats.size,
+        updatedAt: stats.mtime.toISOString(),
+        writable: true,
+      });
+    }
+  }
+
+  files.sort((a, b) => a.fileId.localeCompare(b.fileId));
 
   return {
     data: files,
     meta: {
       partial: false,
       collectedAt: new Date(collectedAtMs).toISOString(),
-      allowlistRoot: 'docs',
-      allowlistCount: files.length,
+      boundariesVersion: boundaries.version ?? null,
+      approvedRoots: patterns,
+      fileCount: files.length,
     },
   };
 }
 
 export async function readMarkdownFile(fileId) {
-  const resolved = resolveAllowedMarkdown(fileId);
-  if (resolved.error) return { error: resolved.error, statusCode: 403, meta: { partial: false, collectedAt: new Date().toISOString() } };
+  const resolved = await resolveMarkdownPath(fileId, { forWrite: false });
+  if (resolved.error) return { error: resolved.error, statusCode: resolved.error.code === 'NOT_FOUND' ? 404 : 403, meta: { partial: false, collectedAt: new Date().toISOString() } };
 
   try {
     const content = await fs.readFile(resolved.absolutePath, 'utf8');
     const stats = await fs.stat(resolved.absolutePath);
     return {
       data: {
-        fileId,
-        path: `docs/${fileId}`,
+        fileId: resolved.relPath,
+        path: resolved.relPath,
         content,
         updatedAt: stats.mtime.toISOString(),
         bytes: Buffer.byteLength(content, 'utf8'),
       },
-      meta: { partial: false, collectedAt: new Date().toISOString(), allowlistRoot: 'docs' },
+      meta: { partial: false, collectedAt: new Date().toISOString(), boundariesVersion: resolved.boundaries.version ?? null },
       statusCode: 200,
     };
   } catch (error) {
@@ -428,59 +606,123 @@ export async function readMarkdownFile(fileId) {
   }
 }
 
+function createUnifiedDiff(previousContent, nextContent, fileId) {
+  if (previousContent === nextContent) {
+    return `--- a/${fileId}\n+++ b/${fileId}\n@@ no changes @@`;
+  }
+
+  return [
+    `--- a/${fileId}`,
+    `+++ b/${fileId}`,
+    '@@ -1 +1 @@',
+    ...previousContent.split('\n').map((line) => `-${line}`),
+    ...nextContent.split('\n').map((line) => `+${line}`),
+  ].join('\n');
+}
+
 export async function previewMarkdownSave(fileId, nextContent) {
   const current = await readMarkdownFile(fileId);
   if (current.error) return current;
 
   return {
     data: {
-      fileId,
+      fileId: current.data.fileId,
       path: current.data.path,
       changed: current.data.content !== nextContent,
-      diff: createUnifiedDiff(current.data.content, nextContent, fileId),
+      diff: createUnifiedDiff(current.data.content, nextContent, current.data.fileId),
       previousBytes: current.data.bytes,
       nextBytes: Buffer.byteLength(nextContent, 'utf8'),
     },
-    meta: { partial: false, collectedAt: new Date().toISOString(), allowlistRoot: 'docs' },
+    meta: { ...current.meta },
     statusCode: 200,
   };
 }
 
-export async function saveMarkdownFile(fileId, nextContent, expectedContent = undefined) {
-  const current = await readMarkdownFile(fileId);
+export async function saveMarkdownFile(fileId, nextContent, expectedContent = undefined, { actor } = {}) {
+  const resolved = await resolveMarkdownPath(fileId, { forWrite: true });
+  if (resolved.error) return { error: resolved.error, statusCode: resolved.error.code === 'NOT_FOUND' ? 404 : 403, meta: { partial: false, collectedAt: new Date().toISOString() } };
+
+  const boundaries = resolved.boundaries;
+  const maxSize = boundaries.maxFileSizeBytes ?? 262144;
+  if (Buffer.byteLength(nextContent, 'utf8') > maxSize) {
+    return {
+      error: createMarkdownForbidden('PAYLOAD_TOO_LARGE', `Markdown content exceeds max size (${maxSize} bytes)`, { fileId: resolved.relPath, maxFileSizeBytes: maxSize }),
+      meta: { partial: false, collectedAt: new Date().toISOString(), boundariesVersion: boundaries.version ?? null },
+      statusCode: 413,
+    };
+  }
+
+  const current = await readMarkdownFile(resolved.relPath);
   if (current.error) return current;
 
   if (typeof expectedContent === 'string' && current.data.content !== expectedContent) {
     return {
       error: {
         code: 'CONFLICT',
-        message: `Markdown file '${fileId}' changed since preview`,
+        message: `Markdown file '${resolved.relPath}' changed since preview`,
         retryable: true,
-        details: { fileId },
+        details: { fileId: resolved.relPath },
       },
       meta: { partial: true, collectedAt: new Date().toISOString(), degradeReasons: ['stale_expected_content'] },
       statusCode: 409,
     };
   }
 
-  const resolved = resolveAllowedMarkdown(fileId);
-  if (resolved.error) return { error: resolved.error, statusCode: 403, meta: { partial: false, collectedAt: new Date().toISOString() } };
+  const oldHash = hashContent(current.data.content);
+  const newHash = hashContent(nextContent);
+
+  const nowIso = new Date().toISOString();
+
+  let backupPath = null;
+  if (boundaries.requireBackupBeforeWrite) {
+    const backupTarget = resolveDataPath(boundaries.backupDir ?? '.rollback/markdown-edits');
+    if (backupTarget.error) return { error: backupTarget.error, statusCode: 403, meta: { partial: false, collectedAt: nowIso } };
+    await ensureDir(backupTarget.absolute);
+
+    const safeRel = resolved.relPath.replaceAll('/', '__');
+    const stamp = nowIso.replaceAll(':', '-').replaceAll('.', '-');
+    const backupName = `${stamp}__${safeRel}__${oldHash}.bak.md`;
+    const backupAbs = path.resolve(backupTarget.absolute, backupName);
+    await fs.writeFile(backupAbs, current.data.content, 'utf8');
+    backupPath = path.relative(backupTarget.base, backupAbs);
+  }
 
   await fs.writeFile(resolved.absolutePath, nextContent, 'utf8');
-  const diff = createUnifiedDiff(current.data.content, nextContent, fileId);
+  const diff = createUnifiedDiff(current.data.content, nextContent, resolved.relPath);
   const stats = await fs.stat(resolved.absolutePath);
+
+  let auditRecord = null;
+  if (boundaries.requireAuditLog) {
+    const auditTarget = resolveDataPath(boundaries.auditLogPath ?? '.audit/markdown-edits.jsonl');
+    if (auditTarget.error) return { error: auditTarget.error, statusCode: 403, meta: { partial: false, collectedAt: nowIso } };
+    await ensureDir(path.dirname(auditTarget.absolute));
+
+    auditRecord = {
+      actor: actor ?? 'unknown',
+      fileId: resolved.relPath,
+      oldHash,
+      newHash,
+      backupPath,
+      timestamp: nowIso,
+    };
+    await fs.appendFile(auditTarget.absolute, `${JSON.stringify(auditRecord)}\n`, 'utf8');
+  }
 
   return {
     data: {
-      fileId,
-      path: current.data.path,
+      fileId: resolved.relPath,
+      path: resolved.relPath,
       saved: true,
       changed: current.data.content !== nextContent,
       diff,
+      oldHash,
+      newHash,
+      backupPath,
+      audit: auditRecord,
       updatedAt: stats.mtime.toISOString(),
       bytes: Buffer.byteLength(nextContent, 'utf8'),
     },
-    meta: { partial: false, collectedAt: new Date().toISOString(), allowlistRoot: 'docs' },
+    meta: { partial: false, collectedAt: nowIso, boundariesVersion: boundaries.version ?? null },
     statusCode: 200,
   };
 }
