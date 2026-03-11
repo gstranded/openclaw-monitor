@@ -1,4 +1,5 @@
 import type {
+  AgentStatus,
   DashboardHealth,
   DashboardResponse,
   EventItem,
@@ -7,6 +8,166 @@ import type {
 } from './dashboardTypes'
 import { API_BASE, API_V1_BASE } from './config'
 import { fetchJson, HttpError } from './fetchJson'
+
+// --- Aggregator (/api/dashboard) envelope from the backend ---
+
+type AggFreshness = {
+  ok?: boolean
+  updatedAt?: string
+  lagMs?: number
+}
+
+type AggMeta = {
+  partial?: boolean
+  collectedAt?: string
+  degradeReasons?: string[]
+  sourceLagMs?: number
+  freshness?: Record<string, AggFreshness>
+}
+
+type AggSourceStatus = {
+  name: string
+  status: 'ok' | 'degraded' | 'unavailable'
+  message?: string
+  collectedAt?: string
+  updatedAt?: string | null
+}
+
+type AggAgent = {
+  agentId: string
+  displayName?: string
+  role?: string
+  status?: string
+  lastActivityAt?: string | null
+  activeTask?: { title?: string } | null
+  score?: number
+}
+
+type AggLeaderboardEntry = {
+  agentId?: string
+  displayName?: string
+  score?: number
+}
+
+type AggEvent = {
+  id?: string
+  at?: string
+  kind?: string
+  title?: string
+  summary?: string
+  severity?: 'info' | 'warning' | 'error'
+}
+
+type AggDashboardEnvelope = {
+  data?: {
+    agents?: AggAgent[]
+    leaderboard?: AggLeaderboardEntry[]
+    recentEvents?: AggEvent[]
+    sourceStatus?: AggSourceStatus[]
+  }
+  meta?: AggMeta
+}
+
+function mapAgentStatus(status?: string): AgentStatus {
+  if (status === 'active') return 'online'
+  if (status === 'idle') return 'idle'
+  if (status === 'blocked') return 'busy'
+  if (status === 'offline') return 'offline'
+  return 'unknown'
+}
+
+function mapSeverity(sev?: string): 'info' | 'warn' | 'error' {
+  if (sev === 'warning') return 'warn'
+  if (sev === 'error') return 'error'
+  return 'info'
+}
+
+function toHealthFromAgg(meta?: AggMeta, sourceStates?: AggSourceStatus[]): DashboardHealth {
+  if (meta?.partial) return 'partial'
+  if ((meta?.degradeReasons || []).length) return 'degraded'
+  if ((sourceStates || []).some((s) => s.status !== 'ok')) return 'degraded'
+  return 'ok'
+}
+
+function sourceHealth(status: AggSourceStatus['status']): DashboardHealth {
+  if (status === 'ok') return 'ok'
+  if (status === 'degraded') return 'degraded'
+  return 'error'
+}
+
+function normalizeAggEnvelope(envelope: AggDashboardEnvelope): DashboardResponse {
+  const agentsRaw = envelope.data?.agents || []
+  const leaderboardRaw = envelope.data?.leaderboard || []
+  const eventsRaw = envelope.data?.recentEvents || []
+  const sourceStatus = envelope.data?.sourceStatus || []
+  const meta = envelope.meta
+
+  const agents: DashboardResponse['agents'] = agentsRaw.map((a) => ({
+    id: a.agentId,
+    name: a.displayName || a.agentId,
+    role: a.role,
+    status: mapAgentStatus(a.status),
+    lastSeenAt: a.lastActivityAt || undefined,
+    currentTask: a.activeTask?.title,
+    score: typeof a.score === 'number' ? a.score : undefined
+  }))
+
+  const leaderboard: LeaderboardEntry[] = leaderboardRaw.map((r) => ({
+    agentId: r.agentId,
+    name: r.displayName || r.agentId || 'unknown',
+    points: typeof r.score === 'number' ? Number(r.score.toFixed(1)) : 0
+  }))
+
+  // sort events by time (old -> new) for timeline readability
+  const sortedEvents = [...eventsRaw].sort((a, b) => {
+    const aMs = a.at ? new Date(a.at).getTime() : 0
+    const bMs = b.at ? new Date(b.at).getTime() : 0
+    return aMs - bMs
+  })
+
+  const timeline: TimelineItem[] = sortedEvents.map((ev, idx) => ({
+    id: ev.id || `${ev.at || 'na'}-${idx}`,
+    ts: ev.at || new Date().toISOString(),
+    title: ev.title || ev.kind || 'event',
+    detail: ev.summary,
+    severity: mapSeverity(ev.severity)
+  }))
+
+  const events: EventItem[] = sortedEvents.map((ev, idx) => ({
+    id: ev.id || `${ev.at || 'na'}-${idx}`,
+    ts: ev.at || new Date().toISOString(),
+    type: ev.kind,
+    message: ev.summary || ev.title || ev.kind || 'event',
+    severity: mapSeverity(ev.severity)
+  }))
+
+  const sources: NonNullable<DashboardResponse['meta']>['sources'] = {}
+
+  for (const s of sourceStatus) {
+    const freshness = meta?.freshness?.[s.name]
+    sources[s.name] = {
+      health: sourceHealth(s.status),
+      freshnessMs: typeof freshness?.lagMs === 'number' ? freshness.lagMs : undefined,
+      message: s.message || s.status
+    }
+  }
+
+  const health = toHealthFromAgg(meta, sourceStatus)
+
+  return {
+    meta: {
+      generatedAt: meta?.collectedAt || new Date().toISOString(),
+      health,
+      sources
+    },
+    agents,
+    leaderboard,
+    timeline,
+    events
+  }
+}
+
+// --- Legacy /api/v1 fallback types ---
 
 type V1Meta = {
   partial?: boolean
@@ -21,7 +182,10 @@ type V1Agent = {
   role?: string
   title?: string
   status?: string
+  // older field name
   healthScore?: number
+  // current backend field name
+  score?: number
   lastActivityAt?: string
   activeTask?: { title?: string }
 }
@@ -31,9 +195,10 @@ type V1AgentsResponse = { data: V1Agent[]; meta?: V1Meta }
 type V1LeaderboardEntry = {
   agentId: string
   displayName: string
-  leaderboardScore: number
-  throughput24h?: number
-  stabilityScore?: number
+  // older field name
+  leaderboardScore?: number
+  // current backend field name
+  score?: number
 }
 
 type V1LeaderboardResponse = { data: V1LeaderboardEntry[]; meta?: V1Meta & { window?: string; sortBy?: string } }
@@ -46,8 +211,10 @@ type V1SourceState = {
 }
 
 type V1TimelineEvent = {
-  eventId: string
-  timestamp: string
+  eventId?: string
+  id?: string
+  timestamp?: string
+  at?: string
   kind?: string
   title: string
   summary: string
@@ -69,22 +236,17 @@ function toHealthFromV1(meta?: V1Meta, sourceStates?: V1SourceState[]): Dashboar
   return 'ok'
 }
 
-function sourceHealth(status: V1SourceState['status']): DashboardHealth {
+function v1SourceHealth(status: V1SourceState['status']): DashboardHealth {
   if (status === 'ok') return 'ok'
   if (status === 'degraded') return 'degraded'
   return 'error'
 }
 
-function mapSeverity(sev: V1TimelineEvent['severity']): 'info' | 'warn' | 'error' {
-  if (sev === 'warning') return 'warn'
-  return sev
-}
-
 /**
  * Load dashboard data via backend APIs.
  *
- * - Prefer the new aggregator endpoint: GET `${API_BASE}/dashboard` (if present)
- * - Fallback to existing V1 endpoints in this repo:
+ * - Prefer the backend aggregator endpoint: GET `${API_BASE}/dashboard`
+ * - Fallback to V1 endpoints:
  *   - GET `${API_V1_BASE}/agents`
  *   - GET `${API_V1_BASE}/leaderboard`
  *   - GET `${API_V1_BASE}/agents/:agentId` (recent events + source status)
@@ -93,15 +255,21 @@ export async function loadDashboardSnapshot(opts?: { signal?: AbortSignal }): Pr
   // 1) Try aggregator endpoint if it exists.
   try {
     const url = `${API_BASE.replace(/\/$/, '')}/dashboard`
-    const res = await fetchJson<DashboardResponse>(url, { timeoutMs: 10_000, signal: opts?.signal })
-    // If it looks usable, return it.
+    const res = await fetchJson<any>(url, { timeoutMs: 10_000, signal: opts?.signal })
+
+    // If backend already returns the UI shape, just use it.
     if (res && (res.agents || res.leaderboard || res.timeline || res.events)) {
-      return res
+      return res as DashboardResponse
+    }
+
+    // Backend currently returns an envelope: { data: {...}, meta: {...} }
+    if (res && res.data && (res.data.agents || res.data.leaderboard || res.data.recentEvents)) {
+      return normalizeAggEnvelope(res as AggDashboardEnvelope)
     }
   } catch (e) {
     // Only swallow "not implemented" style failures.
     if (!(e instanceof HttpError && (e.status === 404 || e.status === 405))) {
-      // other errors still allow fallback, but keep going
+      // other errors still allow fallback
     }
   }
 
@@ -133,19 +301,10 @@ export async function loadDashboardSnapshot(opts?: { signal?: AbortSignal }): Pr
       id: a.agentId,
       name: a.displayName,
       role: a.role || a.title,
-      status:
-        a.status === 'active'
-          ? 'online'
-          : a.status === 'idle'
-            ? 'idle'
-            : a.status === 'blocked'
-              ? 'busy'
-              : a.status === 'offline'
-                ? 'offline'
-                : 'unknown',
+      status: mapAgentStatus(a.status),
       lastSeenAt: a.lastActivityAt,
       currentTask: a.activeTask?.title,
-      score: a.healthScore
+      score: typeof a.healthScore === 'number' ? a.healthScore : typeof a.score === 'number' ? a.score : undefined
     }))
     sources['agents'] = { health: toHealthFromV1(meta), message: `GET ${agentsUrl}` }
   } else {
@@ -159,11 +318,20 @@ export async function loadDashboardSnapshot(opts?: { signal?: AbortSignal }): Pr
   if (leaderboardSettled.status === 'fulfilled') {
     anySuccess = true
     const meta = leaderboardSettled.value.meta
-    leaderboard = (leaderboardSettled.value.data || []).map((r) => ({
-      agentId: r.agentId,
-      name: r.displayName,
-      points: Number.isFinite(r.leaderboardScore) ? Number(r.leaderboardScore.toFixed(1)) : 0
-    }))
+    leaderboard = (leaderboardSettled.value.data || []).map((r) => {
+      const rawScore =
+        typeof r.leaderboardScore === 'number'
+          ? r.leaderboardScore
+          : typeof r.score === 'number'
+            ? r.score
+            : 0
+
+      return {
+        agentId: r.agentId,
+        name: r.displayName,
+        points: Number.isFinite(rawScore) ? Number(rawScore.toFixed(1)) : 0
+      }
+    })
     sources['leaderboard'] = { health: toHealthFromV1(meta), message: `GET ${leaderboardUrl}` }
   } else {
     partial = true
@@ -186,16 +354,16 @@ export async function loadDashboardSnapshot(opts?: { signal?: AbortSignal }): Pr
       anySuccess = true
 
       const recent = detail.data?.recentEvents || []
-      timeline = recent.map((ev) => ({
-        id: ev.eventId,
-        ts: ev.timestamp,
+      timeline = recent.map((ev, idx) => ({
+        id: ev.eventId || ev.id || `${ev.at || ev.timestamp || 'na'}-${idx}`,
+        ts: ev.timestamp || ev.at || new Date().toISOString(),
         title: ev.title,
         detail: ev.summary,
         severity: mapSeverity(ev.severity)
       }))
-      events = recent.map((ev) => ({
-        id: ev.eventId,
-        ts: ev.timestamp,
+      events = recent.map((ev, idx) => ({
+        id: ev.eventId || ev.id || `${ev.at || ev.timestamp || 'na'}-${idx}`,
+        ts: ev.timestamp || ev.at || new Date().toISOString(),
         type: ev.kind,
         message: ev.summary,
         severity: mapSeverity(ev.severity)
@@ -204,7 +372,7 @@ export async function loadDashboardSnapshot(opts?: { signal?: AbortSignal }): Pr
       const sourceStatus = detail.data?.sourceStatus || []
       for (const s of sourceStatus) {
         sources[`source:${s.name}`] = {
-          health: sourceHealth(s.status),
+          health: v1SourceHealth(s.status),
           message: s.message
         }
       }
