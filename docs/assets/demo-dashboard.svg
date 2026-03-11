@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#0b1020"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="520" rx="22" fill="url(#bg)"/>
+  <rect x="36" y="36" width="1128" height="448" rx="18" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.12)"/>
+  <text x="72" y="92" fill="rgba(255,255,255,0.92)" font-family="ui-sans-serif, system-ui" font-size="26" font-weight="700">openclaw-monitor</text>
+  <text x="72" y="126" fill="rgba(255,255,255,0.62)" font-family="ui-sans-serif, system-ui" font-size="14">Demo placeholder · replace with real screenshots later</text>
+
+  <g transform="translate(72,160)">
+    <rect width="1056" height="86" rx="14" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.10)"/>
+    <text x="18" y="34" fill="rgba(255,255,255,0.86)" font-family="ui-sans-serif, system-ui" font-size="14" font-weight="700">Agent cards</text>
+    <text x="18" y="58" fill="rgba(255,255,255,0.62)" font-family="ui-sans-serif, system-ui" font-size="12">status / score / last seen / current task</text>
+  </g>
+
+  <g transform="translate(72,268)">
+    <rect width="340" height="186" rx="14" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.10)"/>
+    <text x="18" y="34" fill="rgba(255,255,255,0.86)" font-family="ui-sans-serif, system-ui" font-size="14" font-weight="700">Timeline</text>
+  </g>
+
+  <g transform="translate(432,268)">
+    <rect width="340" height="186" rx="14" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.10)"/>
+    <text x="18" y="34" fill="rgba(255,255,255,0.86)" font-family="ui-sans-serif, system-ui" font-size="14" font-weight="700">Leaderboard</text>
+  </g>
+
+  <g transform="translate(792,268)">
+    <rect width="336" height="186" rx="14" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.10)"/>
+    <text x="18" y="34" fill="rgba(255,255,255,0.86)" font-family="ui-sans-serif, system-ui" font-size="14" font-weight="700">Event stream</text>
+  </g>
+</svg>
