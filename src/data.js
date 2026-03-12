@@ -235,6 +235,183 @@ function normalizeAgents(snapshot) {
   return agents;
 }
 
+const NOISE_EVENT_KINDS = new Set(['worker-tick', 'worker-skip']);
+
+function eventTimeMs(event) {
+  return toDate(event?.at)?.getTime() ?? 0;
+}
+
+function deriveEventSeverity({ kind, message }) {
+  const normalizedKind = String(kind ?? '').toLowerCase();
+  const normalizedMessage = String(message ?? '').toLowerCase();
+
+  if (normalizedKind.includes('error') || normalizedMessage.includes('error') || normalizedMessage.includes('failed')) return 'error';
+  if (normalizedKind.includes('blocked') || normalizedMessage.includes('blocked') || normalizedKind.includes('degraded')) return 'warn';
+  return 'info';
+}
+
+function parseTaskMessage(message) {
+  const match = String(message ?? '').match(/^(assigned|completed|blocked|cancelled|reopened) task: (.+)$/i);
+  if (!match) return null;
+  return {
+    action: match[1].toLowerCase(),
+    subject: match[2].trim(),
+  };
+}
+
+function deriveEventTitle({ kind, message }) {
+  if (kind === 'task') {
+    const parsed = parseTaskMessage(message);
+    if (parsed) return `Task ${parsed.action}`;
+    return 'Task event';
+  }
+  if (kind === 'dispatch') return 'Task dispatch';
+  if (kind === 'worker-tick') return 'Worker tick';
+  if (kind === 'worker-skip') return 'Worker skip';
+  return kind ? `${kind} event` : 'Event';
+}
+
+function deriveEventSummary({ kind, message }) {
+  if (kind === 'task') {
+    const parsed = parseTaskMessage(message);
+    if (parsed) return parsed.subject;
+  }
+  return String(message ?? '').trim();
+}
+
+function normalizeEventRecord(event, { index } = {}) {
+  const kind = typeof event?.kind === 'string' ? event.kind : 'unknown';
+  const message = typeof event?.message === 'string' ? event.message : '';
+  const at = typeof event?.at === 'string' ? event.at : null;
+  let agentId = typeof event?.agentId === 'string'
+    ? event.agentId
+    : (typeof event?.agent_id === 'string' ? event.agent_id : null);
+
+  // For dispatch events, the actor is often the dispatcher; derive the target agent from message.
+  if (kind === 'dispatch' && typeof message === 'string') {
+    const match = message.match(/\bto\s+([a-z0-9_-]+)\s*$/i);
+    if (match) agentId = match[1];
+  }
+  const source = typeof event?.source === 'string' ? event.source : 'runtime';
+
+  const severity = typeof event?.severity === 'string'
+    ? event.severity
+    : deriveEventSeverity({ kind, message });
+
+  const title = typeof event?.title === 'string'
+    ? event.title
+    : deriveEventTitle({ kind, message });
+
+  const summary = typeof event?.summary === 'string'
+    ? event.summary
+    : deriveEventSummary({ kind, message });
+
+  return {
+    ...event,
+    at,
+    kind,
+    severity,
+    agentId,
+    // keep legacy field for compatibility
+    agent_id: typeof event?.agent_id === 'string' ? event.agent_id : agentId,
+    source,
+    title,
+    summary,
+    message,
+    _index: index,
+  };
+}
+
+function normalizeEvents(rawEvents) {
+  const items = Array.isArray(rawEvents) ? rawEvents : [];
+  const normalized = items.map((event, index) => normalizeEventRecord(event, { index }));
+  normalized.sort((a, b) => {
+    const delta = eventTimeMs(b) - eventTimeMs(a);
+    if (delta !== 0) return delta;
+    return (a._index ?? 0) - (b._index ?? 0);
+  });
+  return normalized;
+}
+
+function mergeNoiseEvents(events) {
+  const merged = [];
+
+  for (const event of events) {
+    const previous = merged.at(-1);
+    const isNoise = NOISE_EVENT_KINDS.has(event.kind);
+
+    if (
+      previous
+      && isNoise
+      && previous.kind === event.kind
+      && previous.agentId === event.agentId
+    ) {
+      previous.count = (previous.count ?? 1) + 1;
+      previous.atEnd = event.at ?? previous.atEnd ?? null;
+      previous.summary = previous.count > 1
+        ? `${previous.summary} (+${previous.count - 1} similar)`
+        : previous.summary;
+      continue;
+    }
+
+    merged.push({ ...event });
+  }
+
+  return merged;
+}
+
+function buildTimeline(events) {
+  // Input is expected sorted by at DESC.
+  const items = [];
+
+  for (const event of events) {
+    if (NOISE_EVENT_KINDS.has(event.kind)) continue;
+
+    if (event.kind === 'task') {
+      const parsed = parseTaskMessage(event.message);
+      if (!parsed) continue;
+      const severity = parsed.action === 'blocked' ? 'warn' : 'info';
+      items.push({
+        at: event.at,
+        kind: `task.${parsed.action}`,
+        severity,
+        agentId: event.agentId,
+        source: event.source,
+        title: `Task ${parsed.action}`,
+        summary: parsed.subject,
+        message: event.message,
+        extra: event.extra,
+        _index: event._index,
+      });
+      continue;
+    }
+
+    if (event.kind === 'dispatch') {
+      items.push({
+        at: event.at,
+        kind: 'dispatch',
+        severity: 'info',
+        agentId: event.agentId,
+        source: event.source,
+        title: 'Task dispatched',
+        summary: event.summary,
+        message: event.message,
+        extra: event.extra,
+        _index: event._index,
+      });
+    }
+  }
+
+  // Stable order: timeline is time-ascending (oldest first).
+  items.sort((a, b) => {
+    const delta = eventTimeMs(a) - eventTimeMs(b);
+    if (delta !== 0) return delta;
+    return (a._index ?? 0) - (b._index ?? 0);
+  });
+
+  return items;
+}
+
 export function createNotFound(agentId, meta) {
   return {
     error: {
@@ -262,11 +439,18 @@ export async function getDashboard() {
       degraded: entry.degraded,
     }));
 
+  const events = mergeNoiseEvents(normalizeEvents(snapshot.events)).slice(0, 200);
+  const timeline = buildTimeline(events).slice(-200);
+
   return {
     data: {
       agents,
       leaderboard,
+      // legacy
       recentEvents: snapshot.events.slice(-50),
+      // normalized
+      events,
+      timeline,
       sourceStatus: snapshot.sourceStatus,
     },
     meta: snapshot.meta,
@@ -293,10 +477,19 @@ export async function getAgentDetail(agentId) {
     .sort((a, b) => (toDate(b.updated_at)?.getTime() ?? 0) - (toDate(a.updated_at)?.getTime() ?? 0))
     .slice(0, 50);
 
-  const recentEvents = snapshot.events
+  // Legacy: keep raw events strictly filtered by agent_id.
+  const rawEvents = snapshot.events
     .filter((evt) => evt.agent_id === agentId)
-    .sort((a, b) => (toDate(b.at)?.getTime() ?? 0) - (toDate(a.at)?.getTime() ?? 0))
-    .slice(0, 50);
+    .sort((a, b) => (toDate(b.at)?.getTime() ?? 0) - (toDate(a.at)?.getTime() ?? 0));
+
+  const recentEvents = rawEvents.slice(0, 50);
+
+  // Normalized: filter by derived agentId (e.g. dispatch events targeted to this agent).
+  const normalizedEvents = normalizeEvents(snapshot.events)
+    .filter((evt) => evt.agentId === agentId);
+
+  const events = mergeNoiseEvents(normalizedEvents).slice(0, 200);
+  const timeline = buildTimeline(events).slice(-200);
 
   const markdownFiles = await listMarkdownFiles();
 
@@ -304,7 +497,11 @@ export async function getAgentDetail(agentId) {
     data: {
       ...summary,
       tasks,
+      // legacy
       recentEvents,
+      // normalized
+      events,
+      timeline,
       sourceStatus: snapshot.sourceStatus,
       markdownFiles: markdownFiles.data,
     },
