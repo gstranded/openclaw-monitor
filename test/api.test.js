@@ -49,6 +49,22 @@ test('GET /api/dashboard returns aggregated dashboard payload', async () => {
     assert.ok(payload.data.agents.some((agent) => agent.agentId === 'buding'));
     assert.equal(typeof payload.meta.collectedAt, 'string');
     assert.ok(payload.meta.freshness);
+
+    assert.ok(Array.isArray(payload.data.events));
+    assert.ok(Array.isArray(payload.data.timeline));
+
+    const first = payload.data.events[0];
+    for (const key of ['at', 'kind', 'severity', 'agentId', 'source', 'title', 'summary']) {
+      assert.ok(Object.hasOwn(first, key));
+    }
+
+    const tick = payload.data.events.find((evt) => evt.kind === 'worker-tick');
+    assert.ok(tick);
+    assert.equal(tick.count, 3);
+
+    // Timeline is stable and time-ascending.
+    assert.equal(payload.data.timeline[0].at, '2026-03-10T00:02:00Z');
+    assert.equal(payload.data.timeline.at(-1).at, '2026-03-10T00:04:00Z');
   });
 });
 
@@ -61,6 +77,13 @@ test('GET /api/agents/:id returns detail payload for known agent', async () => {
     assert.ok(Array.isArray(payload.data.tasks));
     assert.ok(Array.isArray(payload.data.recentEvents));
     assert.ok(Array.isArray(payload.data.markdownFiles));
+
+    assert.ok(Array.isArray(payload.data.events));
+    assert.ok(Array.isArray(payload.data.timeline));
+
+    const dispatch = payload.data.timeline.find((evt) => evt.kind === 'dispatch');
+    assert.ok(dispatch);
+    assert.equal(dispatch.agentId, 'buding');
   });
 });
 

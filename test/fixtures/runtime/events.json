@@ -1,12 +1,60 @@
 [
   {
-    "at": "2026-03-10T00:03:00Z",
-    "kind": "task",
+    "at": "2026-03-10T00:05:03Z",
+    "kind": "worker-tick",
     "agent_id": "buding",
-    "message": "assigned task: fixture",
+    "message": "started worker tick pid=111",
+    "extra": { "pid": 111 }
+  },
+  {
+    "at": "2026-03-10T00:05:02Z",
+    "kind": "worker-tick",
+    "agent_id": "buding",
+    "message": "started worker tick pid=112",
+    "extra": { "pid": 112 }
+  },
+  {
+    "at": "2026-03-10T00:05:01Z",
+    "kind": "worker-tick",
+    "agent_id": "buding",
+    "message": "started worker tick pid=113",
+    "extra": { "pid": 113 }
+  },
+  {
+    "at": "2026-03-10T00:04:00Z",
+    "kind": "dispatch",
+    "agent_id": "ollie",
+    "message": "ollie dispatched '[P4] fixture task' to buding",
     "extra": {
       "task_id": "buding-2",
       "issue_url": "https://github.com/gstranded/openclaw-monitor/issues/32"
     }
+  },
+  {
+    "at": "2026-03-10T00:03:00Z",
+    "kind": "task",
+    "agent_id": "buding",
+    "message": "assigned task: [P4] fixture task",
+    "extra": {
+      "task_id": "buding-2",
+      "issue_url": "https://github.com/gstranded/openclaw-monitor/issues/32"
+    }
+  },
+  {
+    "at": "2026-03-10T00:03:30Z",
+    "kind": "task",
+    "agent_id": "buding",
+    "message": "blocked task: [P4] fixture task",
+    "extra": {
+      "task_id": "buding-2",
+      "reason": "fixture"
+    }
+  },
+  {
+    "at": "2026-03-10T00:02:00Z",
+    "kind": "task",
+    "agent_id": "naicha",
+    "message": "assigned task: other agent",
+    "extra": { "task_id": "naicha-1" }
   }
 ]
