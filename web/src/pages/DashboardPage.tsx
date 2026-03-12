@@ -88,6 +88,8 @@ export default function DashboardPage() {
   const timeline = data?.timeline ?? []
   const events = data?.events ?? []
 
+  const busy = loading || polling
+
   return (
     <div className="page">
       <header className="topbar">
@@ -149,8 +151,8 @@ export default function DashboardPage() {
 
         <div className="gridCols">
           <div className="col">
-            <SectionCard title="Timeline" right={<span className="muted">Activity log</span>}>
-              <Timeline items={timeline} />
+            <SectionCard title="Timeline" right={<span className="muted">milestones</span>}>
+              <Timeline items={timeline} loading={busy} />
             </SectionCard>
           </div>
 
@@ -161,8 +163,8 @@ export default function DashboardPage() {
           </div>
 
           <div className="col">
-            <SectionCard title="Event Stream" right={<span className="muted">Realtime-ish</span>}>
-              <EventStream items={events} />
+            <SectionCard title="Events" right={<span className="muted">filters + search</span>}>
+              <EventStream items={events} loading={busy} />
             </SectionCard>
           </div>
         </div>

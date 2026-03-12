@@ -36,6 +36,10 @@
   --surface2: rgba(255, 255, 255, 0.07);
   --surface3: rgba(255, 255, 255, 0.10);
 
+  /* overlay surfaces used for controls / lists */
+  --glass: rgba(0, 0, 0, 0.14);
+  --glass2: rgba(0, 0, 0, 0.18);
+
   --border: rgba(255, 255, 255, 0.12);
   --border2: rgba(255, 255, 255, 0.18);
 
@@ -64,6 +68,9 @@
   --surface: rgba(255, 255, 255, 0.85);
   --surface2: rgba(255, 255, 255, 0.95);
   --surface3: rgba(15, 23, 42, 0.06);
+
+  --glass: rgba(255, 255, 255, 0.75);
+  --glass2: rgba(255, 255, 255, 0.70);
 
   --border: rgba(15, 23, 42, 0.14);
   --border2: rgba(15, 23, 42, 0.20);

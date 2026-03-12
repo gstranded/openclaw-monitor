@@ -39,13 +39,25 @@ export interface TimelineItem {
   title: string
   detail?: string
   severity?: 'info' | 'warn' | 'error'
+  meta?: {
+    agentId?: string
+    kind?: string
+    taskTitle?: string
+    issueUrl?: string
+  }
 }
 
 export interface EventItem {
   id: string
   ts: string
+  /** backend kind/type */
   type?: string
+  agentId?: string
+  title?: string
+  /** human-readable summary/message */
   message: string
+  /** optional long-form context (e.g. blocker reason) */
+  detail?: string
   severity?: 'info' | 'warn' | 'error'
 }
 

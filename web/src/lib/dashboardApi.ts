@@ -53,8 +53,12 @@ type AggEvent = {
   id?: string
   at?: string
   kind?: string
+  agentId?: string
+  agent_id?: string
   title?: string
   summary?: string
+  message?: string
+  extra?: any
   severity?: 'info' | 'warning' | 'error'
 }
 
@@ -80,6 +84,18 @@ function mapSeverity(sev?: string): 'info' | 'warn' | 'error' {
   if (sev === 'warning') return 'warn'
   if (sev === 'error') return 'error'
   return 'info'
+}
+
+function inferSeverity(kind?: string, text?: string): 'info' | 'warn' | 'error' {
+  const s = `${kind || ''} ${text || ''}`.toLowerCase()
+  if (s.includes('error') || s.includes('fail') || s.includes('exception') || s.includes('panic')) return 'error'
+  if (s.includes('warn') || s.includes('degrad') || s.includes('partial') || s.includes('timeout')) return 'warn'
+  return 'info'
+}
+
+function pickSeverity(explicit?: string, kind?: string, text?: string): 'info' | 'warn' | 'error' {
+  if (explicit) return mapSeverity(explicit)
+  return inferSeverity(kind, text)
 }
 
 function toHealthFromAgg(meta?: AggMeta, sourceStates?: AggSourceStatus[]): DashboardHealth {
@@ -118,28 +134,82 @@ function normalizeAggEnvelope(envelope: AggDashboardEnvelope): DashboardResponse
     points: typeof r.score === 'number' ? Number(r.score.toFixed(1)) : 0
   }))
 
-  // sort events by time (old -> new) for timeline readability
+  function humanizeKind(kind?: string) {
+    if (!kind) return 'event'
+    return kind.replace(/[-_]+/g, ' ')
+  }
+
+  function isMilestone(kind?: string, text?: string) {
+    const k = (kind || '').toLowerCase()
+    const t = (text || '').toLowerCase()
+
+    // noisy background signals we don't want in Timeline
+    if (k.includes('tick') || k.includes('heartbeat') || k.includes('poll')) return false
+    if (k.includes('skip') || t.includes('skip')) return false
+
+    // keep obvious lifecycle / state changes
+    if (k.includes('error') || k.includes('fail') || k.includes('degrad') || k.includes('partial')) return true
+    if (k.includes('task') || k.includes('issue') || k.includes('pr') || k.includes('merge')) return true
+    if (k.includes('start') || k.includes('stop') || k.includes('restart') || k.includes('deploy') || k.includes('exit')) return true
+
+    // fallback: keep only a small subset of less-actionable events
+    return false
+  }
+
+  // sort events by time (old -> new) for stable grouping
   const sortedEvents = [...eventsRaw].sort((a, b) => {
     const aMs = a.at ? new Date(a.at).getTime() : 0
     const bMs = b.at ? new Date(b.at).getTime() : 0
     return aMs - bMs
   })
 
-  const timeline: TimelineItem[] = sortedEvents.map((ev, idx) => ({
-    id: ev.id || `${ev.at || 'na'}-${idx}`,
-    ts: ev.at || new Date().toISOString(),
-    title: ev.title || ev.kind || 'event',
-    detail: ev.summary,
-    severity: mapSeverity(ev.severity)
-  }))
+  const normalizedEvents: EventItem[] = sortedEvents.map((ev, idx) => {
+    const agentId = ev.agentId || ev.agent_id
+    const kind = ev.kind
+    const message = ev.summary || ev.message || ev.title || ev.kind || 'event'
 
-  const events: EventItem[] = sortedEvents.map((ev, idx) => ({
-    id: ev.id || `${ev.at || 'na'}-${idx}`,
-    ts: ev.at || new Date().toISOString(),
-    type: ev.kind,
-    message: ev.summary || ev.title || ev.kind || 'event',
-    severity: mapSeverity(ev.severity)
-  }))
+    let detail: string | undefined
+    try {
+      if (ev.extra?.reason) detail = String(ev.extra.reason)
+      else if (ev.extra && Object.keys(ev.extra).length) detail = JSON.stringify(ev.extra, null, 2)
+    } catch {
+      // ignore
+    }
+
+    return {
+      id: ev.id || `${ev.at || 'na'}-${idx}`,
+      ts: ev.at || new Date().toISOString(),
+      type: kind,
+      agentId,
+      title: ev.title || (kind ? humanizeKind(kind) : undefined),
+      message,
+      detail,
+      severity: pickSeverity(ev.severity, kind, message)
+    }
+  })
+
+  // Event stream should read newest -> oldest
+  const events: EventItem[] = [...normalizedEvents].sort((a, b) => {
+    const aMs = new Date(a.ts).getTime()
+    const bMs = new Date(b.ts).getTime()
+    return bMs - aMs
+  })
+
+  // Timeline should be "milestones" (state changes), not a firehose
+  const timeline: TimelineItem[] = normalizedEvents
+    .filter((ev) => isMilestone(ev.type, `${ev.title || ''} ${ev.message || ''}`))
+    .slice(-80)
+    .map((ev) => ({
+      id: ev.id,
+      ts: ev.ts,
+      title: ev.title || ev.type || 'event',
+      detail: ev.message,
+      severity: ev.severity,
+      meta: {
+        agentId: ev.agentId,
+        kind: ev.type
+      }
+    }))
 
   const sources: NonNullable<DashboardResponse['meta']>['sources'] = {}
 
@@ -354,20 +424,31 @@ export async function loadDashboardSnapshot(opts?: { signal?: AbortSignal }): Pr
       anySuccess = true
 
       const recent = detail.data?.recentEvents || []
-      timeline = recent.map((ev, idx) => ({
-        id: ev.eventId || ev.id || `${ev.at || ev.timestamp || 'na'}-${idx}`,
-        ts: ev.timestamp || ev.at || new Date().toISOString(),
-        title: ev.title,
-        detail: ev.summary,
-        severity: mapSeverity(ev.severity)
-      }))
-      events = recent.map((ev, idx) => ({
-        id: ev.eventId || ev.id || `${ev.at || ev.timestamp || 'na'}-${idx}`,
-        ts: ev.timestamp || ev.at || new Date().toISOString(),
-        type: ev.kind,
-        message: ev.summary,
-        severity: mapSeverity(ev.severity)
-      }))
+      timeline = recent.map((ev, idx) => {
+        const kind = ev.kind
+        const message = ev.summary || ev.title || kind || 'event'
+        return {
+          id: ev.eventId || ev.id || `${ev.at || ev.timestamp || 'na'}-${idx}`,
+          ts: ev.timestamp || ev.at || new Date().toISOString(),
+          title: ev.title || kind || 'event',
+          detail: ev.summary,
+          severity: pickSeverity(ev.severity, kind, message),
+          meta: { kind }
+        }
+      })
+
+      events = recent.map((ev, idx) => {
+        const kind = ev.kind
+        const message = ev.summary || ev.title || kind || 'event'
+        return {
+          id: ev.eventId || ev.id || `${ev.at || ev.timestamp || 'na'}-${idx}`,
+          ts: ev.timestamp || ev.at || new Date().toISOString(),
+          type: kind,
+          title: ev.title,
+          message,
+          severity: pickSeverity(ev.severity, kind, message)
+        }
+      })
 
       const sourceStatus = detail.data?.sourceStatus || []
       for (const s of sourceStatus) {
