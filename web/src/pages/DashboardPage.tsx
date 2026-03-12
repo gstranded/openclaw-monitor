@@ -4,6 +4,7 @@ import EventStream from '../components/EventStream'
 import Leaderboard from '../components/Leaderboard'
 import SectionCard from '../components/SectionCard'
 import StatusBadge from '../components/StatusBadge'
+import ThemeToggle from '../components/ThemeToggle'
 import Timeline from '../components/Timeline'
 import type { DashboardHealth, DashboardResponse } from '../lib/dashboardTypes'
 import { HttpError } from '../lib/fetchJson'
@@ -92,7 +93,11 @@ export default function DashboardPage() {
       <header className="topbar">
         <div className="brand">
           <div className="title">openclaw-monitor</div>
-          <div className="subtitle">Dashboard (V1)</div>
+          <div className="subtitle">Dashboard</div>
+          <nav className="nav">
+            <a className="navLink" href="/">🏠 Dashboard</a>
+            <a className="navLink" href="/markdown">📝 Markdown</a>
+          </nav>
         </div>
 
         <div className="controls">
@@ -108,9 +113,10 @@ export default function DashboardPage() {
             {polling ? <span className="muted">auto-updating…</span> : null}
           </div>
           <div className="btnRow">
-            <button className="btn" onClick={() => void loadOnce({ silent: false })} disabled={loading}>
+            <button className="btn primary" onClick={() => void loadOnce({ silent: false })} disabled={loading}>
               {loading ? 'Loading…' : 'Refresh'}
             </button>
+            <ThemeToggle />
           </div>
         </div>
       </header>
