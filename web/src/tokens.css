@@ -1,0 +1,87 @@
+/* Minimal design tokens (Issue #49)
+   - default theme: dark dashboard (navy / blue-purple)
+   - supports light theme via: documentElement[data-theme="light"]
+*/
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  --space-1: 6px;
+  --space-2: 10px;
+  --space-3: 14px;
+  --space-4: 18px;
+  --space-5: 24px;
+
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-xl: 22px;
+
+  --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 24px 80px rgba(0, 0, 0, 0.45);
+
+  --ring: 0 0 0 2px rgba(255, 255, 255, 0.10), 0 0 0 6px rgba(255, 90, 61, 0.16);
+}
+
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg0: #070A14;
+  --bg1: #0B1024;
+  --bg2: #0C1635;
+
+  --surface: rgba(255, 255, 255, 0.05);
+  --surface2: rgba(255, 255, 255, 0.07);
+  --surface3: rgba(255, 255, 255, 0.10);
+
+  --border: rgba(255, 255, 255, 0.12);
+  --border2: rgba(255, 255, 255, 0.18);
+
+  --text: rgba(255, 255, 255, 0.92);
+  --text2: rgba(255, 255, 255, 0.82);
+  --muted: rgba(255, 255, 255, 0.62);
+
+  --accent: #ff5a3d; /* red/orange */
+  --accent2: #ffb020; /* amber */
+  --primary: #7c3aed; /* purple */
+  --primary2: #38bdf8; /* cyan */
+
+  --ok: #26d18b;
+  --warn: #ffb020;
+  --bad: #ff3d81;
+  --info: #59a7ff;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg0: #f6f8ff;
+  --bg1: #eef2ff;
+  --bg2: #ffffff;
+
+  --surface: rgba(255, 255, 255, 0.85);
+  --surface2: rgba(255, 255, 255, 0.95);
+  --surface3: rgba(15, 23, 42, 0.06);
+
+  --border: rgba(15, 23, 42, 0.14);
+  --border2: rgba(15, 23, 42, 0.20);
+
+  --text: rgba(15, 23, 42, 0.92);
+  --text2: rgba(15, 23, 42, 0.82);
+  --muted: rgba(15, 23, 42, 0.58);
+
+  --accent: #e11d48;
+  --accent2: #f97316;
+  --primary: #4f46e5;
+  --primary2: #0ea5e9;
+
+  --ok: #16a34a;
+  --warn: #f59e0b;
+  --bad: #e11d48;
+  --info: #2563eb;
+
+  --shadow-md: 0 12px 34px rgba(15, 23, 42, 0.14);
+  --shadow-lg: 0 36px 90px rgba(15, 23, 42, 0.18);
+}

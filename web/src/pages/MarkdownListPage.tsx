@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import SectionCard from '../components/SectionCard'
 import StatusBadge from '../components/StatusBadge'
+import ThemeToggle from '../components/ThemeToggle'
 import type { DashboardHealth } from '../lib/dashboardTypes'
 import { API_BASE } from '../lib/config'
 import { fetchJson, HttpError } from '../lib/fetchJson'
@@ -88,7 +89,11 @@ export default function MarkdownListPage() {
       <header className="topbar">
         <div className="brand">
           <div className="title">openclaw-monitor</div>
-          <div className="subtitle">Markdown allowlist</div>
+          <div className="subtitle">Markdown</div>
+          <nav className="nav">
+            <a className="navLink" href="/">🏠 Dashboard</a>
+            <a className="navLink" href="/markdown">📝 Markdown</a>
+          </nav>
         </div>
 
         <div className="controls">
@@ -104,11 +109,12 @@ export default function MarkdownListPage() {
           </div>
           <div className="btnRow">
             <a className="btn" href="/">
-              Back to dashboard
+              ← Dashboard
             </a>{' '}
-            <button className="btn" onClick={() => void loadOnce()} disabled={loading}>
+            <button className="btn primary" onClick={() => void loadOnce()} disabled={loading}>
               {loading ? 'Loading…' : 'Refresh'}
             </button>
+            <ThemeToggle />
           </div>
         </div>
       </header>
