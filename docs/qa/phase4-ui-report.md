@@ -1,11 +1,13 @@
-# Phase 4 UI QA Report — Dashboard 视觉/滚动 + Event/Timeline 新体验
+# Phase 4 UI QA Report — Dashboard 视觉/滚动 + Event/Timeline 新体验（最终复验）
 
 - Issue: https://github.com/gstranded/openclaw-monitor/issues/55
 - QA owner: 闪电（shandian）
-- Target commit (locked): `74cd374e5596222e43dc29826353987f0d39c60b` (origin/main) — `style(web): restyle dashboard to match reference (tokens + before/after)`
-- Date: 2026-03-12
+- Target commit (locked): `2e89a57f2f74d7e0719dd85eaf7d37aa64579103` (origin/main)
+  - #56 `feat: normalize events + actionable timeline (dashboard/agent)`（Issue #54）
+  - #58 `feat(web): improve dashboard scroll + event filters + timeline grouping`（Issue #53）
+- Date: 2026-03-13
 
-> 说明：本次验收基于已合入 main 的 UI restyle（PR #52）。Issue #54（事件/时间线数据规范化）仍 open 且无可测 PR，因此“Event/Timeline 新体验（去噪/可行动/有意义时间线）”只能做 **现状差距审计**，无法给出最终 PASS。
+> 本文是对 #55 的 **最终复验**：在依赖 #53/#54 合入后，重新对 4 页 + dark/light + 滚动/布局 + Event/Timeline 新体验做一次 merge-ready 级验收。
 
 ---
 
@@ -17,23 +19,16 @@
 - Agent detail `/agents/:agentId`
 - Markdown list `/markdown`
 - Markdown editor `/markdown/:fileId`
-- Theme: dark/light（含 `?theme=light|dark` 方式与 toggle）
-- 回归：API error/partial/degraded 逻辑（通过 web 的 `loadDashboardSnapshot` 归一化 + backend tests）；markdown preview/save 安全边界
+- Theme: dark/light（支持 `?theme=light|dark` + toggle）
+- 滚动/布局：单滚动布局、面板内部滚动、窄屏降级（基于 CSS 断点 + 截图证据）
+- 回归：刷新/跳转/markdown preview/save；API error/partial/degraded banner
 
-证据截图（repo 内已有 before/after）：
+证据截图（repo 内已有 P4 before/after 集合）：
 
-- Dashboard
-  - `web/screenshots/before/dashboard.png`
-  - `web/screenshots/after/dashboard.png`
-  - `web/screenshots/after-light/dashboard.png`
-- Agent
-  - `web/screenshots/before/agents_naicha.png`
-  - `web/screenshots/after/agents_naicha.png`
-  - `web/screenshots/after-light/agents_naicha_theme_light.png`
-- Markdown
-  - `web/screenshots/before/markdown.png`
-  - `web/screenshots/after/markdown.png`
-  - `web/screenshots/after-light/markdown_theme_light.png`
+- `web/screenshots/p4/after-dark/*`
+- `web/screenshots/p4/after-light/*`
+- `web/screenshots/p4/before-dark/*`
+- `web/screenshots/p4/before-light/*`
 
 ---
 
@@ -52,103 +47,64 @@ npm --prefix web run typecheck
 npm --prefix web run build
 ```
 
-结果：以上命令均 PASS（backend tests 9/9，web build 成功）。
+结果：以上命令均 PASS（backend tests 9/9；web typecheck/build 通过）。
 
 ---
 
-## 3) UI 观感结论（“我觉得丑”的具体点 + 改善点）
+## 3) 验收点逐条结论
 
-### 3.1 明显改善（相对 before）
+### 3.1 覆盖范围：4 页 + dark/light
 
-1. **信息层级更清晰**：顶部 topbar/controls、卡片式分区（Agents/Timeline/Leaderboard/Event Stream）结构更像产品页而非 demo。
-2. **视觉不再“纯灰/纯黑”**：tokens + 渐变背景 + 卡片阴影让层次更丰富；dark/light 两套都能看。
-3. **全局一致性提升**：按钮、badge、card header/ body、列表 item 的边框/圆角/间距趋于统一，页面更“收敛”。
+- Dashboard/Agent/Markdown list/editor：✅ 截图与路由结构齐全（见 `web/screenshots/p4/*`）。
+- dark/light：✅ 两套主题均有 after 截图。
 
-### 3.2 仍然“丑/不够产品级”的点（具体）
+### 3.2 滚动 / 布局 / 窗口缩放
 
-1. **背景网格/光晕有点抢戏**：在 dark 模式下，grid overlay + 多层 radial gradient 叠加，容易让用户注意力被背景带走，尤其在信息密集列表区域。
-2. **“muted 字体”对比度偏低**：大量辅助信息（时间戳、meta line、表格 header、detail 文案）在暗背景上略灰，远看会“糊成一片”。
-3. **Event 与 Timeline 视觉/语义区分不足**：目前两块都是“左时间戳 + 右标题/摘要”的 list，缺少明显的结构差异（分组、标签、可行动入口），导致用户不清楚看哪块、两者差别是什么。
-4. **列表可读性边界**：severity 主要靠边框色提示，缺少显式标识（icon/label），对色弱/低亮环境不友好。
+**结论：PASS（可展示）**
 
----
+依据：
+- `.page` 使用 `height: 100dvh` + `display:flex`，`.grid` 使用 `overflow:auto`（明确单滚动容器），设计目标是避免 body 与内容同时滚动。
+- `@media (max-width: 1100px)`：三列 `gridCols` 折叠为单列；Event 行布局也折叠为单列（`eventRow` → 1fr），降低窄屏挤压/遮挡风险。
+- Agents 行为：`overflow:auto` 属于可接受的局部横滚（不会拖垮整页）。
 
-## 4) 滚动/布局/窗口缩放（结论 + 风险）
+> 备注：受当前执行环境缺少可用浏览器影响，我无法用真实浏览器录屏复现“滚动卡顿/双滚动条”的体感；此处以 **CSS 结构 + 截图证据** 给出结论，建议上线前再由任意一位同学在 Chrome 下做 2 分钟肉眼确认（1440/1280/<1100）。
 
-基于当前 CSS 结构（`web/src/styles.css`）：
+### 3.3 Event / Timeline 新体验
 
-- `max-width: 1440px` + `gridCols` 三列布局；`@media (max-width: 1100px)` 会改为单列堆叠。
-- `AgentsRow` 使用 `overflow: auto`（横向滚动），其余区域默认随页面纵向滚动。
+**结论：PASS（满足 #55 关键验收）**
 
-**结论（有限）**：从代码结构与截图看，已具备避免“<1100 三列挤压”的机制；Agents 区域的横向 overflow 属于可接受的局部滚动。
-
-**仍需人工验证项**（建议上游提供可测环境后补一轮）：
-- 1440/1280 视窗下三列区域是否出现双滚动条（页面滚动 + 卡片内部纵向滚动）
-- Timeline/Event 长列表下是否出现卡顿/滚动抖动（目前无虚拟列表/分组/折叠）
-- header 是否需要 sticky（当前不是），在长页面场景下导航/刷新入口可能不够易达
+- 过滤器/搜索：✅ `Events` 面板提供 group（agent/kind/none）、severity、agent、kind、search，并展示 filtered count。
+- Event 信息不乱：✅ 支持分组折叠（details），item 具备时间戳 + chips（sev/agent/kind）+ title/summary + 可选 detail。
+- 可行动：✅ Timeline item 提供 `issue` 外链 chip（若 meta.issueUrl 存在），并展示 agentId/kind；Events 侧至少具备 agent/kind 的可定位信息。
+- Timeline 与 Event 区分：✅ Timeline 按天分组，更像“里程碑/关键变化”；Events 更像“可筛选的原始事件流”。
 
 ---
 
-## 5) Event/Timeline 新体验（当前差距）
+## 4) 我觉得“还丑/不够产品级”的具体点（after 仍存在）
 
-### 5.1 过滤器/搜索
-
-**FAIL（P0）**：
-- Dashboard 的 `EventStream` / `Timeline` 组件当前仅渲染 list；无 severity/agent/kind 过滤器、无文本搜索。
-
-### 5.2 “Event 信息不乱且可行动”
-
-**Not ready（P0/P1）**：
-- 当前 event/timeline item 缺少明确的结构字段展示（agentId/source/issue/task link）。
-- 仅靠 `title/summary` + 时间戳，很难做到“可行动”（无法直接跳转 agent/issue/task）。
-
-### 5.3 Timeline 与 Event 区分明确且内容有价值
-
-**FAIL（P0）**：
-- 当前 timeline 与 events 基本同源（同一批事件映射成两种展示），缺少“关键里程碑/状态变化”的独立语义。
-- 这点与 Issue #54 的目标一致：需要后端提供规范化 event schema + timeline semantics。
+1. **背景装饰仍略抢戏**：网格 + 多层 radial gradient 在信息密集区会分散注意力（尤其暗色主题）。
+2. **控件密度略高**：Events 面板 controls 一排 select + input 在窄屏下会 wrap 成多行，视觉上容易“像配置页”。
+3. **Action 的“最后一公里”**：Timeline 有 issue link，但 Events 的 chips 目前不跳转（例如 agentId 不直接 link 到 `/agents/:id`），可行动性还可以再抬一档。
 
 ---
 
-## 6) 回归项（PASS）
+## 5) P0/P1 可用性问题
 
-- 路由：Dashboard/Agent/Markdown list/editor 路由结构未破坏（从代码侧确认）。
-- Markdown：preview/save 安全边界、rollback/audit、expectedContent guard、forbidden path 拒绝 —— backend tests 覆盖且 PASS。
-- degraded/partial：web 侧通过 `loadDashboardSnapshot()` 对后端 envelope 进行归一化，具备展示 partial/degraded 横幅的基础。
-
----
-
-## 7) 问题清单（按严重度）
-
-### P0（阻塞“新体验/可展示”验收）
-
-1. Dashboard：Event/Timeline 缺少 **过滤器/搜索**（与验收标准不符）。
-2. Dashboard：Timeline 与 Event **缺少语义区分**，当前无法称为“更有意义的 Timeline”。
-
-### P1（强烈建议尽快做）
-
-1. Event 可行动性不足：建议补 agent/task/issue 关联信息与跳转入口。
-2. 列表可访问性：severity 不应只靠颜色；建议加 icon/label + 更稳定的层级。
-3. 背景视觉“抢戏”：建议降低网格/光晕强度，提升内容对比度（尤其 muted 文案）。
-
-### P2（锦上添花）
-
-1. 长页面场景下可以考虑 sticky header 或面板内部滚动策略（避免页面过长）。
-2. Timeline 可以考虑按天分组/折叠（提升扫描效率）。
+- P0：未发现。
+- P1：
+  1. 建议把 Events 的 `agentId` chip 直接 link 到 `/agents/:agentId`，把 `kind` chip link 到预设过滤（减少操作成本）。
+  2. 建议为 severity 增加更强的非颜色提示（icon/label 已有 chip，但 listItem 仍有 border 色语义；可再统一）。
 
 ---
 
-## 8) 3 个最值得继续优化的建议（按收益排序）
+## 6) 3 个最值得继续优化的建议（按收益排序）
 
-1. **先补功能可用性**：Event/Timeline 增加至少 2 个过滤器（severity + agent/kind）+ 文本搜索；这是“新体验”验收底线。
-2. **后端规范化落地（Issue #54）**：统一 event schema（kind/severity/agentId/source/title/summary/at）并产出真正的 timeline（里程碑/状态变化），避免 timeline=events 的重复。
-3. **视觉降噪 + 可读性提升**：降低背景 overlay 强度、提高 muted 对比度、为 severity 增加 icon/label，保证远看也能读。
+1. **把 chips 做成可点击的快捷入口**（agent → Agent page；kind → filter；issue/task → 外链），把“可行动”做到位。
+2. **视觉降噪**：降低背景网格/光晕强度，提升 `muted` 对比度，让内容成为主角。
+3. **长列表体验**：Events/Timeline 后续可考虑“默认折叠 + 最近 N 条 + Load more/虚拟列表”，避免事件量上来后滚动成本指数上升。
 
 ---
 
-## 9) 最终结论（merge readiness）
+## 7) 最终结论（merge readiness）
 
-- **视觉（PR #52 已合入部分）**：趋势正确，整体更接近可展示。
-- **Event/Timeline 新体验（Issue #55 关键验收）**：当前 **HOLD/FAIL**（缺过滤/搜索 + timeline 语义未成立）。
-
-建议：等待 Issue #54 提供可测 PR/分支后，再做一次完整的 Phase 4 验收回归并给出最终 PASS/NO-GO。
+**PASS（merge-ready / 可展示）**：#55 的关键验收点在 `main@2e89a57` 上已成立；本轮回归未发现阻塞级问题。
