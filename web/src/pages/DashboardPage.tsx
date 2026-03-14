@@ -2,25 +2,17 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import AgentCardsRow from '../components/AgentCardsRow'
 import EventStream from '../components/EventStream'
 import Leaderboard from '../components/Leaderboard'
+import OverviewHero from '../components/OverviewHero'
 import SectionCard from '../components/SectionCard'
-import StatusBadge from '../components/StatusBadge'
-import ThemeToggle from '../components/ThemeToggle'
 import Timeline from '../components/Timeline'
 import type { DashboardHealth, DashboardResponse } from '../lib/dashboardTypes'
-import { HttpError } from '../lib/fetchJson'
 import { API_BASE, DASHBOARD_POLL_MS } from '../lib/config'
 import { loadDashboardSnapshot } from '../lib/dashboardApi'
+import { HttpError } from '../lib/fetchJson'
 
 function safeHealth(h?: string): DashboardHealth {
   if (h === 'ok' || h === 'partial' || h === 'degraded' || h === 'error') return h
   return 'unknown'
-}
-
-function fmtTime(ts?: string) {
-  if (!ts) return '—'
-  const d = new Date(ts)
-  if (Number.isNaN(d.getTime())) return ts
-  return d.toLocaleString()
 }
 
 export default function DashboardPage() {
@@ -33,7 +25,6 @@ export default function DashboardPage() {
   const abortRef = useRef<AbortController | null>(null)
 
   const health = safeHealth(data?.meta?.health)
-
   const apiBaseLabel = useMemo(() => API_BASE, [])
 
   async function loadOnce({ silent }: { silent: boolean }) {
@@ -88,18 +79,19 @@ export default function DashboardPage() {
   const timeline = data?.timeline ?? []
   const events = data?.events ?? []
 
-  const busy = loading || polling
-
   return (
     <div className="page">
       <header className="topbar">
         <div className="brand">
           <div className="title">openclaw-monitor</div>
-          <div className="subtitle">Dashboard</div>
+          <div className="subtitle">Operational dashboard</div>
           <nav className="nav">
-            <a className="navLink" href="/">🏠 Dashboard</a>
-            <a className="navLink" href="/staff">🧑‍💼 Staff</a>
-            <a className="navLink" href="/markdown">📝 Markdown</a>
+            <a className="navLink" href="/">
+              🏠 Dashboard
+            </a>
+            <a className="navLink" href="/markdown">
+              📝 Markdown
+            </a>
           </nav>
         </div>
 
@@ -108,19 +100,6 @@ export default function DashboardPage() {
             <span className="muted">api</span>
             <code className="code">{apiBaseLabel}</code>
           </div>
-          <div className="metaLine">
-            <span className="muted">updated</span>
-            <span>{fmtTime(lastUpdatedAt || data?.meta?.generatedAt)}</span>
-            <span className="sep">·</span>
-            <StatusBadge health={health} />
-            {polling ? <span className="muted">auto-updating…</span> : null}
-          </div>
-          <div className="btnRow">
-            <button className="btn primary" onClick={() => void loadOnce({ silent: false })} disabled={loading}>
-              {loading ? 'Loading…' : 'Refresh'}
-            </button>
-            <ThemeToggle />
-          </div>
         </div>
       </header>
 
@@ -128,58 +107,63 @@ export default function DashboardPage() {
         <div className="banner error">
           <div className="bannerTitle">Failed to load dashboard</div>
           <pre className="bannerBody">{error}</pre>
-          <div className="bannerHint">
-            We still tried a real API call. When backend is not ready yet, this is expected.
-          </div>
+          <div className="bannerHint">We still tried a real API call. When backend is not ready yet, this is expected.</div>
         </div>
       ) : null}
 
       {health === 'partial' || health === 'degraded' ? (
         <div className={`banner ${health === 'partial' ? 'partial' : 'degraded'}`}>
           <div className="bannerTitle">{health.toUpperCase()} data</div>
-          <div className="bannerBody">
-            Some sources are stale or unavailable. UI should remain usable and clearly indicate limitations.
-          </div>
+          <div className="bannerBody">Some sources are stale or unavailable. UI stays usable and indicates limitations.</div>
         </div>
       ) : null}
 
       <main className="grid">
-        <div className="gridTop">
-          <SectionCard
-            title="Agents"
-            right={
-              <span className="muted">
-                {agents.length} total · <a href="/staff">staff view</a>
-              </span>
-            }
-          >
-            <AgentCardsRow agents={agents} />
-          </SectionCard>
-        </div>
+        <OverviewHero
+          apiBase={apiBaseLabel}
+          meta={data?.meta}
+          health={health}
+          updatedAt={lastUpdatedAt || data?.meta?.generatedAt}
+          agents={agents}
+          events={events}
+          loading={loading}
+          polling={polling}
+          onRefresh={() => void loadOnce({ silent: false })}
+        />
+
+        <SectionCard title="Agents" right={<span className="muted">{agents.length} total</span>}>
+          <AgentCardsRow agents={agents} />
+        </SectionCard>
 
         <div className="gridCols">
           <div className="col">
             <SectionCard title="Timeline" right={<span className="muted">milestones</span>}>
-              <Timeline items={timeline} loading={busy} />
+              <Timeline items={timeline} loading={loading || polling} />
             </SectionCard>
           </div>
 
           <div className="col">
-            <SectionCard title="Leaderboard" right={<span className="muted">Points</span>}>
+            <SectionCard title="Leaderboard" right={<span className="muted">points</span>}>
               <Leaderboard rows={leaderboard} />
             </SectionCard>
           </div>
 
           <div className="col">
-            <SectionCard title="Events" right={<span className="muted">filters + search</span>}>
-              <EventStream items={events} loading={busy} />
+            <SectionCard title="Events" right={<span className="muted">digest by default</span>}>
+              <EventStream items={events} loading={loading || polling} />
             </SectionCard>
           </div>
         </div>
 
-        <SectionCard title="Sources" right={<span className="muted">freshness & health</span>}>
-          <SourcesTable sources={data?.meta?.sources} />
-        </SectionCard>
+        <details className="card" open={false}>
+          <summary className="cardHeader" style={{ cursor: 'pointer' }}>
+            <h2 className="cardTitle">Sources</h2>
+            <div className="cardRight muted">freshness & health</div>
+          </summary>
+          <div className="cardBody">
+            <SourcesTable sources={data?.meta?.sources} />
+          </div>
+        </details>
       </main>
     </div>
   )
@@ -188,9 +172,7 @@ export default function DashboardPage() {
 function SourcesTable({
   sources
 }: {
-  sources:
-    | Record<string, { health?: DashboardHealth; freshnessMs?: number; message?: string }>
-    | undefined
+  sources: Record<string, { health?: DashboardHealth; freshnessMs?: number; message?: string }> | undefined
 }) {
   const keys = Object.keys(sources || {})
   if (!keys.length) return <div className="empty">No source metadata.</div>
@@ -211,9 +193,7 @@ function SourcesTable({
             <td>{k}</td>
             <td>{sources?.[k]?.health || 'unknown'}</td>
             <td>
-              {typeof sources?.[k]?.freshnessMs === 'number'
-                ? `${Math.round((sources?.[k]?.freshnessMs || 0) / 1000)}s`
-                : '—'}
+              {typeof sources?.[k]?.freshnessMs === 'number' ? `${Math.round((sources?.[k]?.freshnessMs || 0) / 1000)}s` : '—'}
             </td>
             <td className="muted">{sources?.[k]?.message || '—'}</td>
           </tr>
