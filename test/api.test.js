@@ -7,6 +7,7 @@ import os from 'node:os';
 
 process.env.NODE_ENV = 'test';
 process.env.OPENCLAW_RUNTIME_DIR = path.resolve(process.cwd(), 'test/fixtures/runtime');
+process.env.OPENCLAW_NOW_ISO = '2026-03-10T00:06:00Z';
 
 const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openclaw-monitor-data-'));
 process.env.OPENCLAW_DATA_DIR = dataDir;
@@ -65,6 +66,22 @@ test('GET /api/dashboard returns aggregated dashboard payload', async () => {
     // Timeline is stable and time-ascending.
     assert.equal(payload.data.timeline[0].at, '2026-03-10T00:02:00Z');
     assert.equal(payload.data.timeline.at(-1).at, '2026-03-10T00:04:00Z');
+
+    assert.ok(Array.isArray(payload.data.staff));
+    assert.ok(Array.isArray(payload.data.activityDigest));
+
+    const staffBuding = payload.data.staff.find((entry) => entry.agentId === 'buding');
+    assert.ok(staffBuding);
+    for (const key of ['status', 'currentActivity', 'nextActivity', 'lastEvidenceLink', 'lastActiveAt']) {
+      assert.ok(Object.hasOwn(staffBuding, key));
+    }
+    assert.equal(staffBuding.status, 'working');
+    assert.match(staffBuding.currentActivity, /^Working:/);
+    assert.match(staffBuding.lastEvidenceLink, /^https?:\/\//);
+
+    const digestBuding = payload.data.activityDigest.find((entry) => entry.agentId === 'buding');
+    assert.ok(digestBuding);
+    assert.equal(digestBuding.status, 'working');
   });
 });
 

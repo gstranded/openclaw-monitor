@@ -143,13 +143,14 @@ function buildSourceStatus(collectedAtMs, sources) {
 async function loadSnapshot() {
   const collectedAtMs = Date.now();
   const runtimeRoot = await resolveRuntimeRoot();
-  const [scores, tasks, events] = await Promise.all([
+  const [scores, tasks, events, sessions] = await Promise.all([
     loadJson(runtimeRoot, 'scores.json'),
     loadJson(runtimeRoot, 'tasks.json'),
     loadJson(runtimeRoot, 'events.json'),
+    loadJson(runtimeRoot, 'sessions.json'),
   ]);
 
-  const sources = { scores, tasks, events };
+  const sources = { scores, tasks, events, sessions };
   const meta = buildMeta(collectedAtMs, sources);
   const sourceStatus = buildSourceStatus(collectedAtMs, sources);
 
@@ -160,6 +161,7 @@ async function loadSnapshot() {
     scores: scores.ok ? scores.data : {},
     tasks: tasks.ok ? tasks.data : [],
     events: events.ok ? events.data : [],
+    sessions: sessions.ok ? sessions.data : [],
     meta,
     sourceStatus,
   };
@@ -207,6 +209,9 @@ function normalizeAgents(snapshot) {
     ...Object.keys(scoreEntries),
     ...snapshot.tasks.map((t) => t.agent_id).filter(Boolean),
     ...snapshot.events.map((e) => e.agent_id).filter(Boolean),
+    ...(Array.isArray(snapshot.sessions)
+      ? snapshot.sessions.map((s) => s.agent_id ?? s.agentId).filter(Boolean)
+      : []),
   ]);
 
   const agents = Array.from(agentIds).sort().map((agentId) => {
@@ -412,6 +417,174 @@ function buildTimeline(events) {
   return items;
 }
 
+function getNowMs(snapshot) {
+  if (process.env.OPENCLAW_NOW_ISO) {
+    const parsed = Date.parse(process.env.OPENCLAW_NOW_ISO);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return snapshot?.collectedAtMs ?? Date.now();
+}
+
+function collapseWhitespace(value) {
+  return String(value ?? '').replaceAll(/\s+/g, ' ').trim();
+}
+
+function summarizeTaskTitle(title, maxLen = 48) {
+  const normalized = collapseWhitespace(title);
+  const stripped = normalized.replace(/^\[[^\]]+\]\s*/, '');
+  if (stripped.length <= maxLen) return stripped;
+  return `${stripped.slice(0, maxLen - 1)}…`;
+}
+
+function classifyBacklogTasks(tasksForAgent) {
+  const backlogStatuses = new Set(['todo', 'blocked', 'in_progress']);
+  const backlog = tasksForAgent.filter((task) => backlogStatuses.has(task.status));
+  const sorted = [...backlog].sort((a, b) => {
+    const aAt = toDate(a.updated_at || a.created_at)?.getTime() ?? 0;
+    const bAt = toDate(b.updated_at || b.created_at)?.getTime() ?? 0;
+    return bAt - aAt;
+  });
+  return {
+    backlog: sorted,
+    current: sorted[0] ?? null,
+    next: sorted[1] ?? null,
+  };
+}
+
+function extractEvidenceLinkFromEvent(event) {
+  const extra = event?.extra && typeof event.extra === 'object' ? event.extra : {};
+  for (const key of ['issue_url', 'pr_url', 'html_url', 'url', 'link']) {
+    if (typeof extra[key] === 'string' && extra[key].startsWith('http')) return extra[key];
+  }
+  const messageUrl = String(event?.message ?? '').match(/https?:\/\/\S+/);
+  return messageUrl ? messageUrl[0] : null;
+}
+
+function normalizeSessions(rawSessions) {
+  const items = Array.isArray(rawSessions) ? rawSessions : [];
+  const activeStates = new Set(['active', 'running', 'busy']);
+
+  return items.map((session, index) => {
+    const agentId = typeof session?.agentId === 'string'
+      ? session.agentId
+      : (typeof session?.agent_id === 'string' ? session.agent_id : null);
+    const status = typeof session?.status === 'string'
+      ? session.status
+      : (typeof session?.state === 'string' ? session.state : 'unknown');
+
+    const lastActiveAt = session?.last_active_at ?? session?.lastActiveAt ?? session?.updated_at ?? session?.updatedAt ?? null;
+    const lastActiveAtMs = toDate(lastActiveAt)?.getTime() ?? null;
+
+    const link = typeof session?.link === 'string'
+      ? session.link
+      : (typeof session?.url === 'string' ? session.url : null);
+
+    return {
+      agentId,
+      status,
+      active: activeStates.has(String(status).toLowerCase()),
+      lastActiveAt: typeof lastActiveAt === 'string' ? lastActiveAt : null,
+      lastActiveAtMs,
+      link: typeof link === 'string' && link.startsWith('http') ? link : null,
+      _index: index,
+    };
+  }).filter((session) => Boolean(session.agentId));
+}
+
+function buildStaffView({ snapshot, agents, normalizedEvents }) {
+  const nowMs = getNowMs(snapshot);
+  const workingWindowMs = Number.parseInt(process.env.OPENCLAW_WORKING_WINDOW_MS ?? '600000', 10);
+
+  const sessions = normalizeSessions(snapshot.sessions);
+
+  const sessionsByAgent = new Map();
+  for (const session of sessions) {
+    const list = sessionsByAgent.get(session.agentId) ?? [];
+    list.push(session);
+    sessionsByAgent.set(session.agentId, list);
+  }
+
+  const eventsByAgent = new Map();
+  for (const event of normalizedEvents) {
+    const list = eventsByAgent.get(event.agentId) ?? [];
+    list.push(event);
+    eventsByAgent.set(event.agentId, list);
+  }
+
+  const staff = agents.map((agent) => {
+    const tasksForAgent = snapshot.tasks.filter((task) => task.agent_id === agent.agentId);
+    const backlog = classifyBacklogTasks(tasksForAgent);
+
+    const agentSessions = sessionsByAgent.get(agent.agentId) ?? [];
+    const agentEvents = eventsByAgent.get(agent.agentId) ?? [];
+
+    agentSessions.sort((a, b) => (b.lastActiveAtMs ?? 0) - (a.lastActiveAtMs ?? 0) || (a._index ?? 0) - (b._index ?? 0));
+    agentEvents.sort((a, b) => eventTimeMs(b) - eventTimeMs(a) || (a._index ?? 0) - (b._index ?? 0));
+
+    const sessionEvidence = agentSessions.find((session) => session.lastActiveAtMs != null) ?? null;
+    const eventEvidence = agentEvents.find((evt) => evt.at) ?? null;
+
+    const sessionAtMs = sessionEvidence?.lastActiveAtMs ?? null;
+    const eventAtMs = eventEvidence ? eventTimeMs(eventEvidence) : null;
+
+    const lastActiveAtMs = Math.max(sessionAtMs ?? 0, eventAtMs ?? 0) || null;
+    const lastActiveAt = lastActiveAtMs ? new Date(lastActiveAtMs).toISOString() : null;
+
+    const hasRecentEvidence = lastActiveAtMs != null && (nowMs - lastActiveAtMs) <= workingWindowMs;
+    const hasLiveSession = agentSessions.some((session) => session.active && session.lastActiveAtMs != null && (nowMs - session.lastActiveAtMs) <= workingWindowMs);
+
+    const hasBacklog = backlog.backlog.length > 0;
+
+    const status = hasLiveSession || hasRecentEvidence
+      ? 'working'
+      : (hasBacklog ? 'standby' : 'idle');
+
+    const currentTask = backlog.current;
+    const nextTask = backlog.next;
+
+    const currentSummary = currentTask ? summarizeTaskTitle(currentTask.title) : null;
+    const nextSummary = nextTask ? summarizeTaskTitle(nextTask.title) : null;
+
+    const currentActivity = currentSummary
+      ? (status === 'working' ? `Working: ${currentSummary}` : `Backlog: ${currentSummary}`)
+      : (status === 'working' ? 'Working' : null);
+
+    const nextActivity = nextSummary ? `Next: ${nextSummary}` : null;
+
+    const evidenceLink = (
+      agentSessions.map((s) => s.link).find(Boolean)
+      ?? agentEvents.map((evt) => extractEvidenceLinkFromEvent(evt)).find(Boolean)
+      ?? (typeof currentTask?.issue_url === 'string' && currentTask.issue_url.startsWith('http') ? currentTask.issue_url : null)
+      ?? null
+    );
+
+    return {
+      agentId: agent.agentId,
+      displayName: agent.displayName,
+      emoji: agent.emoji,
+      role: agent.role,
+      status,
+      currentActivity,
+      currentActivityDetail: currentTask ? { taskId: currentTask.id ?? null, issueUrl: currentTask.issue_url ?? null } : null,
+      nextActivity,
+      nextActivityDetail: nextTask ? { taskId: nextTask.id ?? null, issueUrl: nextTask.issue_url ?? null } : null,
+      lastEvidenceLink: evidenceLink,
+      lastActiveAt,
+    };
+  });
+
+  const activityDigest = staff.map((entry) => ({
+    agentId: entry.agentId,
+    status: entry.status,
+    currentActivity: entry.currentActivity,
+    nextActivity: entry.nextActivity,
+    lastEvidenceLink: entry.lastEvidenceLink,
+    lastActiveAt: entry.lastActiveAt,
+  }));
+
+  return { staff, activityDigest };
+}
+
 export function createNotFound(agentId, meta) {
   return {
     error: {
@@ -441,11 +614,14 @@ export async function getDashboard() {
 
   const events = mergeNoiseEvents(normalizeEvents(snapshot.events)).slice(0, 200);
   const timeline = buildTimeline(events).slice(-200);
+  const staffView = buildStaffView({ snapshot, agents, normalizedEvents: events });
 
   return {
     data: {
       agents,
       leaderboard,
+      staff: staffView.staff,
+      activityDigest: staffView.activityDigest,
       // legacy
       recentEvents: snapshot.events.slice(-50),
       // normalized

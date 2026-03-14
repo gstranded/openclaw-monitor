@@ -1,0 +1,9 @@
+[
+  {
+    "id": "sess-1",
+    "agent_id": "buding",
+    "status": "active",
+    "last_active_at": "2026-03-10T00:05:30Z",
+    "link": "https://github.com/gstranded/openclaw-monitor/issues/32"
+  }
+]
