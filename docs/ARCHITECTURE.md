@@ -74,7 +74,35 @@ Backend 从 `events.json` 读取 **raw events**，并在聚合接口中输出两
 - `count`：合并数量
 - `atEnd`：合并覆盖的最早时间（可选）
 
-## 5. Markdown 管理的安全边界
+## 5. Staff / Activity digest
+
+为了避免把 task 作为 UI 的“原始 payload”完整搬运，Backend 在 `/api/dashboard` 输出两类更面向运营的摘要：
+
+- `staff[]`: 每个 agent 的“正在干嘛/下一项/证据/活跃时间”视图
+- `activityDigest[]`: `staff[]` 的精简版（便于 overview/hero 区展示）
+
+### 5.1 Staff schema (MVP)
+
+每个 `staff[]` 元素至少包含：
+
+- `agentId`
+- `status`: `working` | `standby` | `idle`
+- `currentActivity`: string | null（默认不包含完整 task 原文）
+- `nextActivity`: string | null
+- `lastEvidenceLink`: string | null
+- `lastActiveAt`: ISO string | null
+
+可选 detail 字段用于 UI 展开：`currentActivityDetail` / `nextActivityDetail`。
+
+### 5.2 Status semantics
+
+- `working`: 存在可验证的“活跃证据”（例如 sessions 记录或近期事件）
+- `standby`: 有 backlog（todo/blocked）但无近期活跃证据
+- `idle`: 无 backlog 且无近期活跃证据
+
+缺失 sessions/events 时：通过 `meta.partial` + `meta.degradeReasons` 对 UI 明确降级。
+
+## 6. Markdown 管理的安全边界
 
 写操作（保存）必须满足：
 
@@ -86,7 +114,7 @@ Backend 从 `events.json` 读取 **raw events**，并在聚合接口中输出两
 
 策略配置：`config/markdown-boundaries.json`
 
-## 6. Frontend
+## 7. Frontend
 
 - Vite + React，组件在 `web/src/components/`
 - 页面：
@@ -95,7 +123,7 @@ Backend 从 `events.json` 读取 **raw events**，并在聚合接口中输出两
   - `MarkdownListPage.tsx`
   - `MarkdownEditorPage.tsx`
 
-## 7. Non-goals
+## 8. Non-goals
 
 - 本项目当前不提供：认证/鉴权、多租户、写操作运维闭环。
 - Phase 2 / 3 目标是把“观察面与受控写入”做好，后续再扩展。
