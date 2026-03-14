@@ -19,6 +19,7 @@ export interface DashboardMeta {
 export interface AgentSummary {
   id: string
   name: string
+  emoji?: string
   role?: string
   status?: AgentStatus
   lastSeenAt?: string

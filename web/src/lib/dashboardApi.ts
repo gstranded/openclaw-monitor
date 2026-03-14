@@ -36,10 +36,11 @@ type AggSourceStatus = {
 type AggAgent = {
   agentId: string
   displayName?: string
+  emoji?: string
   role?: string
   status?: string
   lastActivityAt?: string | null
-  activeTask?: { title?: string } | null
+  activeTask?: { title?: string; issueUrl?: string } | null
   score?: number
 }
 
@@ -66,7 +67,12 @@ type AggDashboardEnvelope = {
   data?: {
     agents?: AggAgent[]
     leaderboard?: AggLeaderboardEntry[]
+    /** legacy: raw recent events */
     recentEvents?: AggEvent[]
+    /** preferred: normalized events with title/summary/severity */
+    events?: AggEvent[]
+    /** optional backend-filtered milestones */
+    timeline?: AggEvent[]
     sourceStatus?: AggSourceStatus[]
   }
   meta?: AggMeta
@@ -114,13 +120,19 @@ function sourceHealth(status: AggSourceStatus['status']): DashboardHealth {
 function normalizeAggEnvelope(envelope: AggDashboardEnvelope): DashboardResponse {
   const agentsRaw = envelope.data?.agents || []
   const leaderboardRaw = envelope.data?.leaderboard || []
-  const eventsRaw = envelope.data?.recentEvents || []
+
+  // Newer backend prefers `data.events` / `data.timeline` (already normalized).
+  // Keep `recentEvents` as fallback for older deployments.
+  const eventsRaw = envelope.data?.events || envelope.data?.recentEvents || []
+  const timelineRaw = envelope.data?.timeline || []
+
   const sourceStatus = envelope.data?.sourceStatus || []
   const meta = envelope.meta
 
   const agents: DashboardResponse['agents'] = agentsRaw.map((a) => ({
     id: a.agentId,
     name: a.displayName || a.agentId,
+    emoji: a.emoji,
     role: a.role,
     status: mapAgentStatus(a.status),
     lastSeenAt: a.lastActivityAt || undefined,
@@ -195,21 +207,35 @@ function normalizeAggEnvelope(envelope: AggDashboardEnvelope): DashboardResponse
     return bMs - aMs
   })
 
-  // Timeline should be "milestones" (state changes), not a firehose
-  const timeline: TimelineItem[] = normalizedEvents
-    .filter((ev) => isMilestone(ev.type, `${ev.title || ''} ${ev.message || ''}`))
-    .slice(-80)
-    .map((ev) => ({
-      id: ev.id,
-      ts: ev.ts,
-      title: ev.title || ev.type || 'event',
-      detail: ev.message,
-      severity: ev.severity,
-      meta: {
-        agentId: ev.agentId,
-        kind: ev.type
-      }
-    }))
+  const timeline: TimelineItem[] = timelineRaw.length
+    ? timelineRaw.slice(0, 120).map((ev, idx) => {
+        const agentId = ev.agentId || ev.agent_id
+        const kind = ev.kind
+        const message = ev.summary || ev.message || ev.title || ev.kind || 'event'
+        return {
+          id: ev.id || `${ev.at || 'na'}-${idx}`,
+          ts: ev.at || new Date().toISOString(),
+          title: ev.title || (kind ? humanizeKind(kind) : 'event'),
+          detail: message,
+          severity: pickSeverity(ev.severity, kind, message),
+          meta: { agentId, kind }
+        }
+      })
+    : // Fallback: infer milestones from the event stream.
+      normalizedEvents
+        .filter((ev) => isMilestone(ev.type, `${ev.title || ''} ${ev.message || ''}`))
+        .slice(-80)
+        .map((ev) => ({
+          id: ev.id,
+          ts: ev.ts,
+          title: ev.title || ev.type || 'event',
+          detail: ev.message,
+          severity: ev.severity,
+          meta: {
+            agentId: ev.agentId,
+            kind: ev.type
+          }
+        }))
 
   const sources: NonNullable<DashboardResponse['meta']>['sources'] = {}
 

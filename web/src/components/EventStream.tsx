@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { EventItem } from '../lib/dashboardTypes'
+import Linkify from './Linkify'
 
 function fmt(ts: string) {
   const d = new Date(ts)
@@ -168,8 +169,15 @@ export default function EventStream({ items, loading }: { items: EventItem[]; lo
 
                     <div className="eventText">
                       <div className="eventTitle">{it.title || it.type || 'event'}</div>
-                      <div className="eventSummary">{it.message}</div>
-                      {it.detail ? <pre className="eventDetail">{it.detail}</pre> : null}
+                      <div className="eventSummary">
+                        <Linkify text={it.message} />
+                      </div>
+                      {it.detail ? (
+                        <details className="eventDetailToggle">
+                          <summary className="eventDetailSummary">raw detail</summary>
+                          <pre className="eventDetail">{it.detail}</pre>
+                        </details>
+                      ) : null}
                     </div>
                   </div>
                 </li>
