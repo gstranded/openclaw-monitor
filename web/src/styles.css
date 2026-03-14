@@ -463,6 +463,119 @@ a:hover { text-decoration: underline; }
   background: rgba(255,255,255,0.70);
 }
 
+/* ---------- Staff view (P5) ---------- */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(0,0,0,0.14);
+  font-size: 12px;
+  color: var(--text2);
+}
+
+.pillDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.pill-working { border-color: rgba(38,209,139,0.45); }
+.pill-working .pillDot { background: var(--ok); }
+
+.pill-standby { border-color: rgba(255,176,32,0.45); }
+.pill-standby .pillDot { background: var(--warn); }
+
+.pill-idle { opacity: 0.9; }
+.pill-idle .pillDot { background: rgba(89,167,255,0.85); }
+
+.pill-offline { border-color: rgba(255,61,129,0.45); }
+.pill-offline .pillDot { background: var(--bad); }
+
+.pill-unknown { opacity: 0.8; }
+
+.staffTable {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.staffHeader {
+  display: grid;
+  grid-template-columns: 220px 130px 1fr 1fr 160px 220px;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-lg);
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.10);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.staffRow {
+  display: grid;
+  grid-template-columns: 220px 130px 1fr 1fr 160px 220px;
+  gap: 10px;
+  padding: 12px 12px;
+  border-radius: var(--r-xl);
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.14);
+}
+
+@media (max-width: 1100px) {
+  .staffHeader { display: none; }
+  .staffRow {
+    grid-template-columns: 1fr;
+  }
+}
+
+.staffAgent { display: flex; flex-direction: column; gap: 4px; }
+.staffName { font-weight: 820; }
+.staffSub { font-size: 12px; }
+
+.staffText {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text2);
+}
+
+.staffLinks { display: flex; flex-direction: column; gap: 8px; }
+
+.compactRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-lg);
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.03);
+  color: var(--text2);
+  text-decoration: none;
+}
+
+.compactRow:hover { border-color: rgba(255,255,255,0.18); }
+
+.rowLeft { font-weight: 700; }
+.rowRight { color: var(--muted); font-size: 12px; }
+
+.emptyState {
+  padding: 18px;
+  border-radius: var(--r-xl);
+  border: 1px dashed rgba(255,255,255,0.22);
+  background: rgba(255,255,255,0.03);
+}
+
+.emptyTitle { font-weight: 820; margin-bottom: 6px; }
+.emptyDetail { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.emptyAction { margin-top: 10px; }
+
 /* ---------- P4: Event/Timeline information architecture ---------- */
 
 .panel { display: flex; flex-direction: column; gap: 10px; }

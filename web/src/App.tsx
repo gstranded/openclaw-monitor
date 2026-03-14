@@ -2,6 +2,7 @@ import DashboardPage from './pages/DashboardPage'
 import AgentPage from './pages/AgentPage'
 import MarkdownEditorPage from './pages/MarkdownEditorPage'
 import MarkdownListPage from './pages/MarkdownListPage'
+import StaffPage from './pages/StaffPage'
 
 function decodePathPart(value: string) {
   try {
@@ -19,6 +20,10 @@ export default function App() {
 
   if (parts[0] === 'agents' && parts[1]) {
     return <AgentPage agentId={decodePathPart(parts[1])} />
+  }
+
+  if (parts[0] === 'staff') {
+    return <StaffPage />
   }
 
   if (parts[0] === 'markdown' && parts.length === 1) {
