@@ -1,0 +1,88 @@
+name: viewport-smoke
+
+on:
+  workflow_dispatch:
+  push:
+    # Only auto-run on this ops branch to produce evidence once.
+    branches:
+      - claw/gouzi/p5-ops-*
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend deps
+        run: npm ci
+
+      - name: Install web deps
+        run: npm --prefix web ci
+
+      - name: Prepare minimal runtime fixture
+        run: |
+          mkdir -p .tmp/runtime
+          cat > .tmp/runtime/scores.json <<'JSON'
+          {
+            "ollie": {"name":"Ollie","emoji":"🦦","role":"manager","score":0,"updated_at":"2026-03-01 00:00:00Z","history":[]}
+          }
+          JSON
+          echo '[]' > .tmp/runtime/tasks.json
+          echo '[]' > .tmp/runtime/events.json
+
+      - name: Start backend
+        run: |
+          OPENCLAW_RUNTIME_DIR="$GITHUB_WORKSPACE/.tmp/runtime" PORT=3000 node src/server.js >backend.log 2>&1 &
+          echo $! > backend.pid
+
+      - name: Start web dev server
+        run: |
+          npm --prefix web run dev -- --host 127.0.0.1 --port 5173 >web.log 2>&1 &
+          echo $! > web.pid
+
+      - name: Wait for services
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/health >/dev/null 2>&1 && curl -fsS http://127.0.0.1:5173/ >/dev/null 2>&1; then
+              echo "services ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "services not ready" >&2
+          echo "--- backend.log ---"; tail -n 200 backend.log || true
+          echo "--- web.log ---"; tail -n 200 web.log || true
+          exit 1
+
+      - name: Install Playwright (Chromium)
+        run: |
+          npm i playwright@1.50.1 --no-save
+          npx playwright install --with-deps chromium
+
+      - name: Run viewport smoke
+        run: |
+          node scripts/viewport_smoke.mjs --base-url http://127.0.0.1:5173 --out artifacts/viewport-smoke
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewport-smoke
+          path: |
+            artifacts/viewport-smoke/**
+            backend.log
+            web.log
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -f web.pid ]; then kill $(cat web.pid) || true; fi
+          if [ -f backend.pid ]; then kill $(cat backend.pid) || true; fi
