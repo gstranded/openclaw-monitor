@@ -98,6 +98,7 @@ export default function DashboardPage() {
           <div className="subtitle">Dashboard</div>
           <nav className="nav">
             <a className="navLink" href="/">🏠 Dashboard</a>
+            <a className="navLink" href="/staff">🧑‍💼 Staff</a>
             <a className="navLink" href="/markdown">📝 Markdown</a>
           </nav>
         </div>
@@ -144,7 +145,14 @@ export default function DashboardPage() {
 
       <main className="grid">
         <div className="gridTop">
-          <SectionCard title="Agents" right={<span className="muted">{agents.length} total</span>}>
+          <SectionCard
+            title="Agents"
+            right={
+              <span className="muted">
+                {agents.length} total · <a href="/staff">staff view</a>
+              </span>
+            }
+          >
             <AgentCardsRow agents={agents} />
           </SectionCard>
         </div>
